@@ -10,7 +10,7 @@ Hi, I'm Harrison!
 I graduated with a Master's in Computer Science from Illinois Institute of Technology in December, 2023. 
 <br>
 <br>
-As of August 2024, I'm working as a software engineer at the Unviversity of Houston Computational Biomedicine Lab. 
+As of August 2024, I'm working as a software engineer at the University of Houston Computational Biomedicine Lab. 
 <br>
 <br>
 
