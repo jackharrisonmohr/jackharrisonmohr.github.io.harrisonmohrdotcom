@@ -1,0 +1,39 @@
+---
+interface Props {
+  type?: "info" | "warning" | "tip";
+}
+
+const { type = "info" } = Astro.props;
+
+const styles = {
+  info: "border-accent/30 bg-accent/5",
+  warning: "callout-warning",
+  tip: "callout-tip",
+};
+
+const labels = {
+  info: "Note",
+  warning: "Warning",
+  tip: "Tip",
+};
+---
+
+<aside class:list={["rounded-lg border-l-4 px-5 py-4 my-6 not-prose", styles[type]]}>
+  <p class="font-mono text-xs font-medium uppercase tracking-wide mb-2 text-muted">
+    {labels[type]}
+  </p>
+  <div class="text-sm leading-relaxed text-text/80">
+    <slot />
+  </div>
+</aside>
+
+<style>
+  .callout-warning {
+    border-color: var(--color-callout-warning-border);
+    background-color: var(--color-callout-warning-bg);
+  }
+  .callout-tip {
+    border-color: var(--color-callout-tip-border);
+    background-color: var(--color-callout-tip-bg);
+  }
+</style>

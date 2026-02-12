@@ -1,0 +1,44 @@
+---
+import PageLayout from "./PageLayout.astro";
+
+interface Props {
+  title: string;
+  description: string;
+  date: Date;
+  readingTime: number;
+}
+
+const { title, description, date, readingTime } = Astro.props;
+
+const formattedDate = date.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+---
+
+<PageLayout title={`${title} — Harrison Mohr`} description={description}>
+  <article class="max-w-3xl mx-auto px-6 py-16">
+    <header class="mb-10">
+      <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-3">
+        {title}
+      </h1>
+      <div class="flex items-center gap-3 text-sm text-muted font-mono">
+        <time datetime={date.toISOString()}>{formattedDate}</time>
+        <span>&middot;</span>
+        <span>{readingTime} min read</span>
+      </div>
+    </header>
+    <div class="prose prose-neutral prose-lg max-w-none">
+      <slot />
+    </div>
+    <div class="mt-16 pt-8 border-t border-border">
+      <a
+        href="/writing"
+        class="text-sm text-muted hover:text-accent transition-colors"
+      >
+        &larr; Back to all posts
+      </a>
+    </div>
+  </article>
+</PageLayout>

@@ -1,0 +1,34 @@
+---
+title: "Building AI Systems That Actually Work"
+description: "Lessons from shipping AI agents, ML platforms, and deep learning pipelines in production environments."
+date: 2026-02-11
+---
+
+import Callout from "../../components/mdx/Callout.astro";
+
+There's a gap between AI demos and AI systems. Demos show what's possible. Systems show what's reliable.
+
+Over the past few years, I've shipped AI across very different contexts — a voice-enabled coaching agent at a startup, ML platforms for NSF-funded research, and deep learning pipelines for medical imaging. Each taught me something different about what it takes to make AI work outside the notebook.
+
+## The model is the easy part
+
+When I built segmentation models for renal cell carcinoma detection at UChicago, the U-Net architecture was well-understood. The hard part was everything around it: data loading from proprietary formats, augmentation strategies that respected medical imaging constraints, and evaluation that actually measured clinical utility rather than just pixel overlap.
+
+The same pattern holds in LLM-based systems. At MakeTimeFlow, the Claude API call is maybe 5% of the voice coaching system. The other 95% is session state management, context windowing, graceful degradation when APIs are slow, and making the conversation feel natural across multi-turn interactions.
+
+## Beautiful charts can lie
+
+On the AI-SNIPS project at UH, the system identified relationships between counterfeit pharmaceutical websites using fuzzy URL pattern matching. The visualizations looked compelling — clean graphs showing vendor networks. Except the relationships were artifacts of the matching heuristic, not real patterns.
+
+<Callout type="tip">
+  If your pipeline produces results that look too clean, that's a signal to
+  validate harder, not to celebrate.
+</Callout>
+
+This experience permanently changed how I evaluate ML system outputs. I now treat every metric as a hypothesis, not a fact, and I always ask: *what would have to be true for this result to be wrong?*
+
+## Ship the system, not the model
+
+The common thread across all of this work: production AI is systems engineering. The model matters, but so does the data pipeline feeding it, the infrastructure serving it, the evaluation framework validating it, and the integration layer connecting it to users.
+
+That's the kind of engineering I find most interesting — the intersection of AI capabilities and production reliability, where getting the system right is the real challenge.
