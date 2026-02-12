@@ -1,0 +1,89 @@
+---
+import PageLayout from "../layouts/PageLayout.astro";
+---
+
+<PageLayout
+  title="About — Harrison Mohr"
+  description="Applied AI engineer building production AI agent systems. From audio production to ML engineering."
+>
+  <div class="max-w-3xl mx-auto px-6 py-16">
+    <div class="flex flex-col sm:flex-row gap-8 sm:gap-12 mb-12">
+      <div class="shrink-0">
+        <img
+          src="/images/headshot.png"
+          alt="Harrison Mohr"
+          class="w-36 h-36 rounded-full object-cover"
+          width="144"
+          height="144"
+        />
+      </div>
+      <div>
+        <h1 class="text-3xl font-bold mb-1">Harrison Mohr</h1>
+        <p class="text-lg text-muted mb-4">Applied AI Engineer</p>
+        <div class="flex items-center gap-4 text-sm text-muted">
+          <a
+            href="https://github.com/jackharrisonmohr"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="hover:text-accent transition-colors"
+          >
+            GitHub
+          </a>
+          <a
+            href="https://linkedin.com/in/harrisonmohr"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="hover:text-accent transition-colors"
+          >
+            LinkedIn
+          </a>
+          <a
+            href="mailto:jackharrisonmohr@gmail.com"
+            class="hover:text-accent transition-colors"
+          >
+            jackharrisonmohr@gmail.com
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <div class="prose prose-neutral prose-lg max-w-none">
+      <p>
+        I'm a founding engineer at <a href="https://maketimeflow.com">MakeTimeFlow</a>,
+        where I build production AI agent systems — voice-enabled coaching, LLM
+        orchestration, and real-time integrations — on a small team shipping fast.
+        I own the full product lifecycle, from customer research and product
+        strategy through architecture and deployment.
+      </p>
+
+      <p>
+        Before this, I led engineering on two NSF-funded ML platforms at the
+        University of Houston, where I owned the full AWS stack and bridged the
+        gap between ML model outputs and user-facing applications. One of those
+        platforms powered emergency food distribution logistics for the Houston
+        Food Bank. Before that, I built deep learning training pipelines for
+        medical imaging research at UChicago's Department of Radiology, where I
+        led a small team developing segmentation models for renal cell carcinoma
+        detection.
+      </p>
+
+      <p>
+        My path into engineering wasn't conventional. I studied audio design and
+        production at Columbia College Chicago, where I wrote and produced music
+        that's since accumulated over two million views on YouTube. That
+        background gave me an obsession with signal quality, careful listening,
+        and building things that work in the real world — instincts that
+        transferred directly when I pivoted to computer science and earned my
+        M.A.S. at Illinois Institute of Technology.
+      </p>
+
+      <p>
+        I care about shipping AI systems that actually work in production,
+        building infrastructure that scales beyond the demo, and making rigorous
+        engineering decisions under real constraints. I'm drawn to problems at
+        the intersection of AI capabilities and production reliability — where
+        the model is only part of the system, and the system is what matters.
+      </p>
+    </div>
+  </div>
+</PageLayout>

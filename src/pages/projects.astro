@@ -1,0 +1,77 @@
+---
+import PageLayout from "../layouts/PageLayout.astro";
+import { getCollection, render } from "astro:content";
+
+const projects = (await getCollection("projects")).sort(
+  (a, b) => a.data.order - b.data.order
+);
+---
+
+<PageLayout
+  title="Projects — Harrison Mohr"
+  description="Selected engineering projects: AI agents, ML platforms, and production systems."
+>
+  <div class="max-w-3xl mx-auto px-6 py-16">
+    <h1 class="text-3xl font-bold mb-4">Projects</h1>
+    <p class="text-muted mb-12">
+      Selected work spanning AI agent development, ML platform engineering, and
+      production systems.
+    </p>
+
+    <div class="space-y-16">
+      {
+        projects.map(async (project) => {
+          const { Content } = await render(project);
+          return (
+            <article id={project.id} class="scroll-mt-24">
+              <div class="mb-4">
+                <h2 class="text-2xl font-bold mb-1">{project.data.title}</h2>
+                <p class="text-sm text-muted">
+                  <span class="font-medium text-text/70">
+                    {project.data.role}
+                  </span>{" "}
+                  &middot; {project.data.org} &middot;{" "}
+                  <span class="font-mono">{project.data.dates}</span>
+                </p>
+              </div>
+              <div class="flex flex-wrap gap-2 mb-6">
+                {project.data.tech.map((t: string) => (
+                  <span class="font-mono text-xs px-2 py-1 bg-text/5 rounded text-muted">
+                    {t}
+                  </span>
+                ))}
+              </div>
+              <div class="prose prose-neutral">
+                <Content />
+              </div>
+              {project.data.links && (
+                <div class="flex gap-4 mt-6">
+                  {project.data.links.github && (
+                    <a
+                      href={project.data.links.github}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="text-sm text-accent hover:underline"
+                    >
+                      GitHub &rarr;
+                    </a>
+                  )}
+                  {project.data.links.live && (
+                    <a
+                      href={project.data.links.live}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="text-sm text-accent hover:underline"
+                    >
+                      Live &rarr;
+                    </a>
+                  )}
+                </div>
+              )}
+            </article>
+          );
+        })
+      }
+    </div>
+  </div>
+</PageLayout>
