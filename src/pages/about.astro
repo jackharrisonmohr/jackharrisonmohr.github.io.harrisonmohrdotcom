@@ -6,26 +6,26 @@ import PageLayout from "../layouts/PageLayout.astro";
   title="About — Harrison Mohr"
   description="Applied AI engineer building production AI agent systems. From audio production to ML engineering."
 >
-  <div class="max-w-3xl mx-auto px-6 py-16">
-    <div class="flex flex-col sm:flex-row gap-8 sm:gap-12 mb-12">
+  <div class="max-w-4xl mx-auto px-6 py-20">
+    <div class="flex flex-col sm:flex-row gap-8 sm:gap-12 mb-16">
       <div class="shrink-0">
         <img
           src="/images/headshot.png"
           alt="Harrison Mohr"
-          class="w-36 h-36 rounded-full object-cover"
+          class="w-36 h-36 rounded-lg object-cover"
           width="144"
           height="144"
         />
       </div>
       <div>
-        <h1 class="text-3xl font-bold mb-1">Harrison Mohr</h1>
-        <p class="text-lg text-muted mb-4">Applied AI Engineer</p>
-        <div class="flex items-center gap-4 text-sm text-muted">
+        <h1 class="font-serif text-4xl sm:text-5xl font-semibold mb-2">Harrison Mohr</h1>
+        <p class="text-lg text-muted mb-5">Applied AI Engineer</p>
+        <div class="flex items-center gap-6 text-sm text-muted">
           <a
             href="https://github.com/jackharrisonmohr"
             target="_blank"
             rel="noopener noreferrer"
-            class="hover:text-accent transition-colors"
+            class="hover:text-text transition-colors duration-300"
           >
             GitHub
           </a>
@@ -33,13 +33,13 @@ import PageLayout from "../layouts/PageLayout.astro";
             href="https://www.linkedin.com/in/jack-harrison-m-4280b9a5/"
             target="_blank"
             rel="noopener noreferrer"
-            class="hover:text-accent transition-colors"
+            class="hover:text-text transition-colors duration-300"
           >
             LinkedIn
           </a>
           <a
             href="mailto:jackharrisonmohr@gmail.com"
-            class="hover:text-accent transition-colors"
+            class="hover:text-text transition-colors duration-300"
           >
             jackharrisonmohr@gmail.com
           </a>
@@ -49,45 +49,44 @@ import PageLayout from "../layouts/PageLayout.astro";
 
     <div class="prose dark:prose-invert prose-lg max-w-none">
       <p>
-        I'm the founding engineer at <a href="https://maketimeflow.com">MakeTimeFlow</a>,
-        building production AI agent systems: voice-enabled coaching, LLM
-        orchestration, and real-time integrations. I drive the full product
-        lifecycle in close collaboration with the CEO, from customer research
-        and product strategy through architecture and deployment. My current
-        work spans AI agent development (Claude API, ElevenLabs real-time voice),
-        backend system design, and building AI-native development workflows for
-        the engineering team itself.
+        I'm a founding engineer at
+        <a href="https://maketimeflow.com">MakeTimeFlow</a>, building the
+        company's AI agent systems in close collaboration with the CEO: a
+        voice-enabled coaching agent (Claude API + ElevenLabs real-time speech),
+        the integration architecture connecting it to users' calendars and
+        workflows, and the AI-native development workflows the engineering team
+        runs on. I work across the full product lifecycle, from customer research
+        and product strategy through architecture and deployment.
       </p>
 
       <p>
-        Previously, I led engineering on two NSF-funded ML platforms ($1.2M+
-        combined) at the University of Houston, owning the full AWS stack and
-        bridging the gap between ML model outputs and user-facing applications.
-        One of those platforms supported emergency food distribution logistics
-        for the Houston Food Bank. Before that, I built deep learning training
-        pipelines for medical imaging research at UChicago's Department of
-        Radiology, where I led a small team developing segmentation models for
-        renal cell carcinoma detection and built an automated video generation
-        pipeline that let the team visually diagnose model failure modes across
-        temporal CT sequences.
+        Before MakeTimeFlow, I led engineering on two competitively funded NSF
+        research platforms ($1.2M+ combined) at the University of Houston. One
+        supported emergency food distribution logistics for the Houston Food
+        Bank; the other targeted counterfeit pharmaceutical vendor prediction.
+        I owned the full AWS stack, microservices architecture, and data pipeline
+        reliability. Before that, I built deep learning training pipelines at
+        UChicago Radiology, where I led a small team developing U-Net
+        segmentation models for detecting ablation zones during histotripsy
+        treatment of renal tumors and improved baseline performance by 240%.
       </p>
 
       <p>
-        My path into engineering wasn't conventional. I studied audio design and
-        production at Columbia College Chicago, where I wrote and produced music
-        that's since accumulated over two million views on YouTube. That
-        background gave me an obsession with signal quality, careful listening,
-        and building things that work in the real world. Those instincts
-        transferred directly when I pivoted to computer science and earned my
-        M.A.S. at Illinois Institute of Technology.
+        My path into engineering started in music. I studied audio design at
+        Columbia College Chicago and wrote and produced music that's accumulated
+        over two million views on YouTube. Studio work trains the same instincts
+        engineering demands: signal versus noise, iteration under constraints,
+        and knowing when something is done versus when you're just noodling.
+        Those instincts carried over when I earned my M.A.S. in Computer Science
+        at Illinois Institute of Technology.
       </p>
 
       <p>
-        I'm genuinely energized by this moment in AI. The power of these systems
-        is growing fast, and how we build them matters as much as what we build.
-        I care about building systems that hold up under real-world pressure, and
-        I think the best engineering happens when technical rigor meets curiosity
-        and a real connection to the people using the thing.
+        Across all of this work, the pattern I keep seeing is that the model is
+        rarely the hard part. The real challenges are in everything around it:
+        data quality, pipeline reliability, evaluation, and the integration layer
+        connecting predictions to the people who use them. That's where I spend
+        most of my time, and it's the work I enjoy most.
       </p>
     </div>
   </div>

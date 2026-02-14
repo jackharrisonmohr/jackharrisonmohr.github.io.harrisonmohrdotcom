@@ -2,6 +2,7 @@
 title: "Building AI Systems That Actually Work"
 description: "Lessons from shipping AI agents, ML platforms, and deep learning pipelines in production environments."
 date: 2026-02-11
+draft: true
 ---
 
 import Callout from "../../components/mdx/Callout.astro";
@@ -12,7 +13,7 @@ Over the past few years, I've shipped AI across very different contexts: a voice
 
 ## The model is the easy part
 
-When I built segmentation models for renal cell carcinoma detection at UChicago, the U-Net architecture was well-understood. The hard part was everything around it: data loading from proprietary formats, augmentation strategies that respected medical imaging constraints, and evaluation that actually measured clinical utility rather than just pixel overlap.
+When I built segmentation models for ablation zone detection during histotripsy treatment of renal tumors at UChicago, the U-Net architecture was well-understood. The hard part was everything around it: data loading from proprietary formats, augmentation strategies that respected medical imaging constraints, and evaluation that actually measured clinical utility rather than just pixel overlap.
 
 The same pattern holds in LLM-based systems. At MakeTimeFlow, the Claude API call is maybe 5% of the voice coaching system. The other 95% is session state management, context windowing, graceful degradation when APIs are slow, and making the conversation feel natural across multi-turn interactions.
 
