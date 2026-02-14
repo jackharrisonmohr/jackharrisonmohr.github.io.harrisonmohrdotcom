@@ -2,25 +2,23 @@
 interface Props {
   title: string;
   description: string;
+  org: string;
   tech: string[];
   href: string;
 }
 
-const { title, description, tech, href } = Astro.props;
+const { title, description, org, tech, href } = Astro.props;
 ---
 
 <a href={href} class="group block py-6">
-  <h3 class="font-serif text-xl font-semibold text-text group-hover:text-text/70 transition-colors duration-300 mb-2">
-    {title}
-  </h3>
-  <p class="text-sm text-muted leading-relaxed mb-3">{description}</p>
-  <div class="flex flex-wrap gap-2">
-    {
-      tech.map((t) => (
-        <span class="font-mono text-xs text-muted-light">
-          {t}
-        </span>
-      ))
-    }
+  <div class="flex items-baseline justify-between gap-4 mb-2">
+    <h3 class="font-serif text-xl font-semibold text-text group-hover:text-text/70 transition-colors duration-300">
+      {title}
+    </h3>
+    <span class="text-sm text-muted-light shrink-0">{org}</span>
   </div>
+  <p class="text-sm text-muted leading-relaxed mb-3">{description}</p>
+  <p class="font-mono text-xs text-muted-light">
+    {tech.join(" · ")}
+  </p>
 </a>
