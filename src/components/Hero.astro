@@ -2,41 +2,34 @@
 
 ---
 
-<section class="max-w-4xl mx-auto px-6 pt-24 pb-20">
-  <h1 class="font-serif text-5xl sm:text-6xl font-semibold tracking-tight mb-5">
+<section class="min-h-[100dvh] max-w-4xl mx-auto px-6 flex flex-col justify-center relative">
+  <div class="pt-12"></div>
+  <h1 class="font-serif text-6xl sm:text-7xl lg:text-8xl font-semibold tracking-tight mb-4">
     Harrison Mohr
   </h1>
-  <p class="text-xl text-muted mb-8">Applied AI Engineer</p>
-  <p class="text-lg leading-relaxed text-text/80 max-w-2xl mb-10">
-    Founding Engineer at <a href="https://maketimeflow.com" target="_blank" rel="noopener noreferrer" class="underline decoration-border underline-offset-[3px] hover:decoration-text transition-all duration-300">MakeTimeFlow</a>,
+  <p class="text-xl sm:text-2xl text-muted mb-8">Applied AI Engineer</p>
+  <p class="text-base sm:text-lg leading-relaxed text-text/70 max-w-2xl">
+    Founding Engineer at <a href="https://maketimeflow.com" target="_blank" rel="noopener noreferrer" class="text-text/90 underline decoration-border underline-offset-[3px] hover:decoration-text transition-all duration-300">MakeTimeFlow</a>,
     building production AI agent systems end-to-end: voice coaching, LLM
     orchestration, real-time integrations. Previously led engineering on two
     NSF-funded research platforms ($1.2M+ combined) at the University of
     Houston and built deep learning training pipelines for medical imaging
     at UChicago.
   </p>
-  <div class="flex items-center gap-6 text-sm text-muted">
-    <a
-      href="https://github.com/jackharrisonmohr"
-      target="_blank"
-      rel="noopener noreferrer"
-      class="hover:text-text transition-colors duration-300"
-    >
-      GitHub
-    </a>
-    <a
-      href="https://www.linkedin.com/in/jack-harrison-m-4280b9a5/"
-      target="_blank"
-      rel="noopener noreferrer"
-      class="hover:text-text transition-colors duration-300"
-    >
-      LinkedIn
-    </a>
-    <a
-      href="mailto:jackharrisonmohr@gmail.com"
-      class="hover:text-text transition-colors duration-300"
-    >
-      Email
-    </a>
+
+  <div class="absolute bottom-8 left-1/2 -translate-x-1/2 animate-gentle-bounce">
+    <svg class="w-5 h-5 text-muted-light" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5L12 21m0 0l-7.5-7.5M12 21V3" />
+    </svg>
   </div>
 </section>
+
+<style>
+  @keyframes gentle-bounce {
+    0%, 100% { transform: translateX(-50%) translateY(0); }
+    50% { transform: translateX(-50%) translateY(6px); }
+  }
+  .animate-gentle-bounce {
+    animation: gentle-bounce 2.5s ease-in-out infinite;
+  }
+</style>
