@@ -18,12 +18,12 @@ const formattedDate = date.toLocaleDateString("en-US", {
 ---
 
 <PageLayout title={`${title} — Harrison Mohr`} description={description}>
-  <article class="max-w-3xl mx-auto px-6 py-16">
-    <header class="mb-10">
-      <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-3">
+  <article class="max-w-4xl mx-auto px-6 py-20">
+    <header class="mb-12">
+      <h1 class="font-serif text-4xl sm:text-5xl font-semibold tracking-tight mb-4">
         {title}
       </h1>
-      <div class="flex items-center gap-3 text-sm text-muted font-mono">
+      <div class="flex items-center gap-3 text-sm text-muted-light font-mono">
         <time datetime={date.toISOString()}>{formattedDate}</time>
         <span>&middot;</span>
         <span>{readingTime} min read</span>
@@ -32,10 +32,10 @@ const formattedDate = date.toLocaleDateString("en-US", {
     <div class="prose dark:prose-invert prose-lg max-w-none">
       <slot />
     </div>
-    <div class="mt-16 pt-8 border-t border-border">
+    <div class="mt-20 pt-8 border-t border-border">
       <a
         href="/writing"
-        class="text-sm text-muted hover:text-accent transition-colors"
+        class="text-sm text-muted hover:text-text transition-colors duration-300"
       >
         &larr; Back to all posts
       </a>

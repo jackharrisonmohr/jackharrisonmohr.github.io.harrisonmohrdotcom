@@ -11,32 +11,32 @@ const projects = (await getCollection("projects")).sort(
   title="Projects — Harrison Mohr"
   description="Selected engineering projects: AI agents, ML platforms, and production systems."
 >
-  <div class="max-w-3xl mx-auto px-6 py-16">
-    <h1 class="text-3xl font-bold mb-4">Projects</h1>
-    <p class="text-muted mb-12">
+  <div class="max-w-4xl mx-auto px-6 py-20">
+    <h1 class="font-serif text-4xl sm:text-5xl font-semibold mb-4">Projects</h1>
+    <p class="text-muted text-lg mb-16">
       Selected work spanning AI agent development, ML platform engineering, and
       production systems.
     </p>
 
-    <div class="space-y-16">
+    <div class="space-y-20">
       {
         projects.map(async (project) => {
           const { Content } = await render(project);
           return (
             <article id={project.id} class="scroll-mt-24">
               <div class="mb-4">
-                <h2 class="text-2xl font-bold mb-1">{project.data.title}</h2>
+                <h2 class="font-serif text-2xl sm:text-3xl font-semibold mb-2">{project.data.title}</h2>
                 <p class="text-sm text-muted">
                   <span class="font-medium text-text/70">
                     {project.data.role}
                   </span>{" "}
                   &middot; {project.data.org} &middot;{" "}
-                  <span class="font-mono">{project.data.dates}</span>
+                  <span class="font-mono text-xs">{project.data.dates}</span>
                 </p>
               </div>
-              <div class="flex flex-wrap gap-2 mb-6">
+              <div class="flex flex-wrap gap-x-3 gap-y-1 mb-8">
                 {project.data.tech.map((t: string) => (
-                  <span class="font-mono text-xs px-2 py-1 bg-text/5 rounded text-muted">
+                  <span class="font-mono text-xs text-muted-light">
                     {t}
                   </span>
                 ))}
@@ -45,13 +45,13 @@ const projects = (await getCollection("projects")).sort(
                 <Content />
               </div>
               {project.data.links && (
-                <div class="flex gap-4 mt-6">
+                <div class="flex gap-6 mt-8">
                   {project.data.links.github && (
                     <a
                       href={project.data.links.github}
                       target="_blank"
                       rel="noopener noreferrer"
-                      class="text-sm text-accent hover:underline"
+                      class="text-sm text-muted hover:text-text underline decoration-border underline-offset-[3px] hover:decoration-text transition-all duration-300"
                     >
                       GitHub &rarr;
                     </a>
@@ -61,7 +61,7 @@ const projects = (await getCollection("projects")).sort(
                       href={project.data.links.live}
                       target="_blank"
                       rel="noopener noreferrer"
-                      class="text-sm text-accent hover:underline"
+                      class="text-sm text-muted hover:text-text underline decoration-border underline-offset-[3px] hover:decoration-text transition-all duration-300"
                     >
                       Live &rarr;
                     </a>

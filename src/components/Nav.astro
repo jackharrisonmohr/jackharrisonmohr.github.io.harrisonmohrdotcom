@@ -10,17 +10,17 @@ const currentPath = Astro.url.pathname;
 ---
 
 <nav class="border-b border-border">
-  <div class="max-w-3xl mx-auto px-6 py-4 flex items-center justify-between">
-    <a href="/" class="font-semibold text-text hover:text-accent transition-colors">
-      Harrison Mohr
+  <div class="max-w-4xl mx-auto px-6 py-5 flex items-center justify-between">
+    <a href="/" class="font-serif text-lg font-semibold text-text transition-colors duration-300">
+      HM
     </a>
-    <div class="flex items-center gap-4 sm:gap-6">
+    <div class="flex items-center gap-5 sm:gap-8">
       {
         navLinks.map((link) => (
           <a
             href={link.href}
             class:list={[
-              "text-sm transition-colors",
+              "text-sm transition-colors duration-300",
               currentPath === link.href || (link.href !== "/" && currentPath.startsWith(link.href))
                 ? "text-text font-medium"
                 : "text-muted hover:text-text",
@@ -34,7 +34,7 @@ const currentPath = Astro.url.pathname;
         id="theme-toggle"
         type="button"
         aria-label="Toggle dark mode"
-        class="text-muted hover:text-text transition-colors p-1"
+        class="text-muted hover:text-text transition-colors duration-300 p-1"
       >
         <!-- Sun icon (visible in dark mode) -->
         <svg class="hidden dark:block w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
