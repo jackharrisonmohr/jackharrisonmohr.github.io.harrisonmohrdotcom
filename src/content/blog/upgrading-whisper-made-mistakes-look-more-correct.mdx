@@ -1,0 +1,266 @@
+---
+title: "Upgrading Whisper Made My Voice Agent's Mistakes Look More Correct"
+description: "A case study in why narrow benchmarks with adversarial cases catch the failure modes that matter — built around an unexpected regression I caught before it shipped."
+date: 2026-05-25
+draft: false
+---
+
+import Callout from "../../components/mdx/Callout.astro";
+import Figure from "../../components/mdx/Figure.astro";
+
+*A case study in why narrow benchmarks with adversarial cases catch the failure modes that matter.*
+
+I built a targeted benchmark to test a specific critical failure mode for voice agents: reliable ID capture under degraded audio quality. The benchmark is deliberately narrow — by design, more on that below — and I built it expecting to use it for one experiment. It caught a regression I hadn't predicted.
+
+When I naïvely "upgraded" the agent's ASR model from Whisper tiny to large-v3, overall capture accuracy climbed monotonically across all four model sizes, just as I'd expected. So did the rate at which the agent committed a *wrong* identifier with high confidence. On the 25 hardest cases in the benchmark — audio so degraded that no model in a seven-pass ensemble could recover any of them — tiny.en correctly escalated 100% of the time. large-v3 hallucinated a wrong answer past the commit threshold on **16 of 25**. Same audio, same agent, same policy thresholds; only the underlying ASR changed.
+
+The fix turned out to be one line: recalibrate the agent's commit threshold per model. After recalibration, large-v3 dominated every other configuration on both axes — 92% capture rate and 6% wrong-commit rate. Pareto improvement, no tradeoff. But the fix is only available if you have a benchmark that can see the problem in the first place, and a more typical eval shape — clean audio plus accuracy-as-headline — couldn't.
+
+This post is about that regression, the data behind it, and what designing the benchmark this way taught me about voice-agent eval design more broadly. The unexpected bug is the case study. The lesson is about a discipline.
+
+<Callout type="info">
+**TL;DR**
+- Bigger Whisper, same policy, same audio: capture rate climbs **64% → 89%**, severe-bucket wrong-commit rate climbs **0% → 64%**. Every wrong commit is a *confident* wrong commit; the confidence signal is silent on every one.
+- A one-line per-model threshold recalibration restores Pareto-dominant behavior. Large-v3 + recalibration is the global optimum across seven runs (92% / 6%).
+- The bug is one symptom of a broader phenomenon: confidence proxies on token likelihood decouple from semantic correctness on out-of-distribution inputs, in ways that vary by model. The right lesson isn't "always recalibrate" — it's "be specific about what you care about, and design your eval to measure it directly."
+</Callout>
+
+## Why this matters
+
+Voice agents are being deployed in increasingly high-stakes scenarios, and we are still in the early phase of that rollout. Today a critical failure usually costs revenue and goodwill. Tomorrow it will cost more than that. Imagine a medical scribe agent capturing the wrong medication name, an emergency dispatch agent capturing the wrong street address, or an air traffic control agent hearing the wrong flight number. Each of those is an instance of the same critical failure mode: **mishearing key information and proceeding as though nothing went wrong**.
+
+The thing the agent is supposed to do when it can't reliably hear is *escalate to a human*. The gate between "commit" and "escalate" is a confidence threshold over the ASR output. That gate is doing more work than it looks like, and how it should be tuned depends — precisely — on which ASR model is sitting underneath it. Get this wrong and you ship hallucinations into systems that record them as truth.
+
+## The benchmark
+
+I generated 100 test cases — 200 audio fixtures total, two attempts per case — using the ElevenLabs TTS API. Each fixture is a short spoken utterance of an identifier, e.g. *"S as in sierra, X-ray, one, one, eight, five"* (canonical: `SX1185`). Three identifier formats: alphanumeric member IDs, prefixed claim IDs, and hyphenated reference codes. The cases span five buckets of increasingly degraded audio, with the worst bucket designed to be genuinely unrecoverable.
+
+| Bucket | n | Distortion |
+| --- | --- | --- |
+| clean | 15 | none |
+| light | 15 | mild noise OR phone bandpass alone |
+| moderate | 20 | phone bandpass + 10 dB SNR noise |
+| heavy | 25 | phone bandpass + 5 dB SNR + light dropout |
+| severe | 25 | phone bandpass + −12 dB SNR + 250 ms dropout @ 55% per-window |
+
+The degradation pipeline is deterministic and modeled loosely on a phone call: a 300–3400 Hz bandpass (the standard phone band), a μ-law codec roundtrip (the standard phone codec), additive white noise at a configurable SNR, and packet dropout where 250 ms windows are zeroed at a configurable probability.[^1] The severe bucket layers all four at adversarial settings. The catalog is seeded; rerunning the generator produces byte-identical fixtures.
+
+For each case, the agent under test receives the audio file and chooses one of three actions: commit a transcription, ask the rep to repeat (one retry allowed), or escalate to a human. On the cases where the audio is truly unintelligible, the right behavior is to escalate. Better silence than a confidently wrong commit when the value about to be recorded is a medication, an emergency address, or a patient identifier.
+
+To exercise the benchmark I built a simple deterministic agent that wraps a Whisper ASR model. The agent transcribes the audio, parses the transcript to an ID shape (uppercase, strip non-alphanumerics, validate against a basic format), and decides based on Whisper's confidence — `exp(avg_logprob)`, the geometric mean of per-token output probabilities, which Whisper exposes for free in its decode output. The policy is three thresholds:
+
+```python
+# voice_agent_eval/whisper_agent.py — the policy gate
+
+def decide(asr_text: str, confidence: float) -> Action:
+    parsed = parse_id_shape(asr_text)   # uppercase, strip, normalize
+
+    if parsed is None or confidence < ESCALATE_BELOW:   # 0.40
+        return Escalate()
+    if confidence < CONFIRM_BELOW:                      # 0.55
+        return AskForRepeat()
+    return Commit(parsed)
+```
+
+Three lines. The whole policy. Most of this post is about the constant `0.55` and how much work it's doing that nobody looks at.
+
+### A note on what the benchmark deliberately ignores
+
+The benchmark cheats on every dimension that isn't load-bearing for the failure mode I wanted to test, and the cheating is the point. There is no LLM "brain" in this agent — it is fully deterministic; the only source of variability across runs is the ASR. There is no preceding conversation, no turn-taking, no barge-ins, no end-pointing, no latency budget. The benchmark isn't even real-time; it is turn-based and runs from saved audio files. (There is an optional FastAPI harness to make a runner-vs-agent split possible, but the runs in this post all use the in-process path.)
+
+This is by design. Every one of those dimensions matters for shipping a real voice agent, and each of them is an enormous topic in its own right — turn-taking alone could be the subject of a benchmark of comparable size and would deserve one. But none of them are load-bearing for the question I wanted to put under a microscope: *given an audio clip and an ASR confidence signal, does the agent's commit-vs-escalate decision do the right thing as we vary the ASR?* Strip everything else out and what remains is the coupling between an ASR's confidence signal and a downstream policy decision in isolation. A more realistic harness would test something else, and would muddy this question in the process.
+
+The same logic applies on the agent side. I varied one design dimension: ASR model size. There is a long list of other agent choices that could in principle move the numbers — an LLM in the loop, a smarter parser, a multi-pass agreement check, a confidence proxy that uses more than `avg_logprob` (the deep-dive section below gets to that). Some of those are worth investigating. But the point of *this* benchmark is to characterize the failure mode of the cheapest plausible deterministic agent, because that is the agent shape that ships most often in production and the one whose calibration assumptions are most likely to go unexamined.
+
+The willingness to be aggressively narrow is the methodology choice I most want to defend. It is what makes the finding crisp. It is also what makes the benchmark cheap to reproduce — the whole thing runs in about ten minutes on a Modal GPU for roughly twenty cents. Cheap benchmarks get run more often, by more people, against more model variants. Expensive benchmarks gather dust.
+
+## The finding
+
+Four runs, four Whisper sizes, same 100 cases, same agent, same policy. Here is the headline:
+
+<Figure
+  src="/images/asr-calibration/fig_01_headline_trend.svg"
+  alt="Three rates across four Whisper sizes. Capture rate climbs from 64 to 89 percent. Aggregate wrong-commit rate climbs slightly from 19 to 24 percent. Severe-bucket wrong-commit rate explodes from 0 to 64 percent."
+  caption="Three rates, four model sizes, identical audio and policy. Capture (blue) climbs cleanly. Aggregate wrong-commit rate (orange) barely moves — easy to mistake for noise. Severe-bucket wrong-commit rate (red) is the same story without the dilution: 0% at tiny.en, 64% at large-v3."
+/>
+
+In table form:
+
+| Run | Capture rate | Wrong-commit rate | Confident wrong rate | Escalations |
+|---|---|---|---|---|
+| tiny.en | 64% | 19% | 19% | 33 |
+| small.en | 73% | 23% | 23% | 22 |
+| medium.en | 80% | 21% | 21% | 19 |
+| **large-v3** | **89%** | **24%** | **24%** | **9** |
+
+A few things to notice. Every wrong commit, in every run, was a *confident* wrong commit — meaning the confidence proxy on those wrong answers was at or above the commit threshold, not borderline. The signal that's supposed to catch these is silent on every single one. There is no run where `exp(avg_logprob)` successfully flagged a wrong commit as low-confidence and triggered an escalation or a retry.
+
+The regression is also concentrated where it matters most. The clean and light buckets show essentially no wrong-commit movement across model sizes; the heavy bucket shows some movement; the severe bucket carries the whole story.
+
+<Figure
+  src="/images/asr-calibration/fig_05_wrong_commit_heatmap.svg"
+  alt="Heatmap of wrong-commit rate by run and difficulty bucket. The large-v3 severe-bucket cell shows 64 percent."
+  caption="Wrong-commit rate, every run × every bucket. The 64 in the large-v3 / severe cell is doing all the work in the aggregate trend above."
+/>
+
+The aggregate dilutes the regression in exactly the cases where escalation is the right behavior. A CI gate that watched aggregate capture rate or aggregate wrong-commit rate would pass this upgrade. A gate that watched escalation behavior on impossible audio specifically would block it. Most of this post is about that distinction.
+
+## A mechanism story, presented as a hypothesis
+
+It is tempting to look at this trend and supply an immediate causal story. Bigger Whisper models have stronger language priors; stronger priors let them hallucinate more linguistically plausible content on out-of-distribution audio; per-token confidence on those plausible-but-wrong outputs stays high; the commit gate waves them through. Each step in that story is individually plausible, and the per-case data is at least *consistent* with it. Three representative cases, all real and traceable to per-case reports in the repo.
+
+**Case `hea_071`. Canonical `CLM854254`. Heavy distortion.**
+
+```
+tiny.en     ESCALATE                       (conf 0.49, garbled output)
+small.en    OK   CLM854254                 (conf 0.78)
+medium.en   OK   CLM854254                 (conf 0.76)
+large-v3    WRONG  VCLM854254              (conf 0.89)
+```
+
+tiny.en correctly bails. small.en and medium.en — the middle of the capability range — both transcribe the ID correctly. large-v3 hallucinates a phantom `V` at the front of the string and commits with confidence *higher* than the smaller models that got it right. The proposed-mechanism story: there is a moment of voiceless friction at the start of the utterance; small and medium ignore it; large's stronger acoustic prior decides it's a letter, and its language prior makes `VCLM` look plausible enough (you've seen `VIN`, `VAT`, `VLD`) that per-token confidences stay high.
+
+**Case `sev_092`. Canonical `128ZT412`. Severe distortion.**
+
+```
+tiny.en     ESCALATE
+small.en    ESCALATE        ("Thanks for watching!")
+medium.en   ESCALATE
+large-v3    WRONG  38807416                (conf 0.70)
+```
+
+Three of four models output something the parser can't accept as an ID and escalate. large-v3 produces an eight-digit string bearing no resemblance to the canonical, with confidence well above the commit threshold.
+
+**Case `sev_098`. Canonical `117PS896`. Severe distortion.** This one is the most interesting because *every* model wrong-commits, but watch how the wrong outputs evolve:
+
+```
+tiny.en     ESCALATE       ("What's going on inside the camera?...")
+small.en    WRONG  1173STANDS9            (conf 0.56)
+medium.en   WRONG  11787879               (conf 0.59)
+large-v3    WRONG  1176789                (conf 0.77)
+```
+
+The errors don't get *less wrong* across model sizes — they get *more plausible-looking*. small.en's output contains the word "STANDS"; any half-decent downstream validator would flag it immediately. medium.en drops the letters but produces an eight-digit string that's the wrong length for the schema. large-v3 produces a clean seven-digit string that, structurally, looks exactly like the kind of identifier a downstream system might accept. And it's the most confident of the three.
+
+These cases tell a clean story. The story is also the kind of story a careful reader should not yet accept on this evidence. Here is what I have *not* shown.
+
+I have not systematically measured "linguistic plausibility" of the wrong outputs across models. The per-case examples are suggestive but cherry-picked. I do not have, for instance, a perplexity score under a held-out language model showing that large-v3's wrong outputs are systematically more English-like than small.en's, or a regex-matching rate showing that large-v3's wrong outputs match an ID template at a higher rate. "More plausible-looking" is a pattern I noticed in the data, not a number I computed.
+
+I have not controlled for output length. `exp(avg_logprob)` is the geometric mean over output tokens, and shorter outputs have higher geometric means almost mechanically. If large-v3 systematically produces shorter wrong outputs than small.en (a plausible thing — large-v3 has been trained to be more decisive about when it's done), part of the confidence inflation in the data is a length-averaging artifact rather than a model-capability fact.
+
+I have not ruled out the boring alternative. "All large LMs are systematically overconfident — that's a generic calibration property, not specifically about plausible-hallucination capacity" — predicts the same headline trend without needing the mechanism story at all.
+
+The honest position is therefore that the mechanism story is a *hypothesis the data is consistent with*, not a *cause that's been demonstrated*. The repo's `todos.md` lays out the analyses that would firm it up or knock it down — output-length controls, plausibility scoring of wrong outputs, comparison of mean confidence on wrong vs. correct commits per model, and ultimately a learned multi-feature calibrator that would directly test whether the per-model threshold dependency survives proper calibration.
+
+What I claim in the rest of the post does not depend on the mechanism story being right. The empirical fact — that a single confidence threshold does not transfer across model sizes, and that recalibration restores Pareto-dominant behavior — stands regardless of *why*.
+
+## The fix: recalibrate per model
+
+The intuitive response to the regression is: lift the commit threshold to catch the wrong commits. But by how much? Pick it per model and you discover the F1-optimal threshold climbs with model capability:
+
+<Figure
+  src="/images/asr-calibration/fig_04_optimal_threshold.svg"
+  alt="Bar chart of F1-optimal confidence threshold per Whisper size. Tiny and small peak around 0.52, medium around 0.57, large-v3 at 0.70."
+  caption="The F1-optimal commit threshold is not a constant; it's a property of the (policy, model) pair, and it climbs monotonically with model capability."
+/>
+
+<Figure
+  src="/images/asr-calibration/fig_06_threshold_sweep.svg"
+  alt="F1 versus threshold curves for the four Whisper sizes overlaid on one plot. Each curve peaks at a different threshold."
+  caption="Each curve is one model. Each peaks at a different threshold. The dashed line is the default 0.55 — in roughly the right neighborhood for tiny / small / medium, but well to the left of large-v3's peak."
+/>
+
+tiny.en and small.en both peak around 0.52. medium.en wants 0.57. large-v3 wants 0.70. A single threshold across all four either over-escalates the small models or under-escalates the big one. The "right" threshold is not a property of the policy; it's a property of the (policy, model) pair, and that coupling is what makes a naïve model swap dangerous.
+
+Picking the right threshold per model transforms the picture:
+
+<Figure
+  src="/images/asr-calibration/fig_02_pareto.svg"
+  alt="Pareto plot: capture rate versus wrong-commit rate. Each base model is a circle, each recalibrated variant is a star. Every arrow from base to recal points up and to the right."
+  caption="Each base model (circle) and its recalibrated variant (star). Every arrow points up and to the right. Recalibration is a strict Pareto improvement at every model size — more captures *and* fewer wrong commits."
+/>
+
+| Run | Threshold | Capture | Wrong commit | Escalation F1 |
+| --- | --- | ---: | ---: | ---: |
+| tiny.en | 0.55 | 64% | 19% | 0.84 |
+| small.en | 0.55 | 73% | 23% | 0.86 |
+| **small recal** | **0.65** | **80%** | **11%** | **0.93** |
+| medium.en | 0.55 | 80% | 21% | 0.79 |
+| **medium recal** | **0.65** | **84%** | **10%** | **0.93** |
+| large-v3 | 0.55 | 89% | 24% | **0.47** ← collapse |
+| **large recal** | **0.75** | **92%** | **6%** | **0.93** |
+
+A few things in that table to pause on. **Lifting the threshold doesn't trade safety for accuracy.** Both move in the right direction at once: borderline-correct ASR that was being auto-committed now passes through a confirmation prompt and gets captured; borderline-incorrect ASR that was being auto-committed now triggers an escalation. Every base→recal arrow on the Pareto plot points up and to the right.
+
+**large-v3 + recalibration is the global optimum** — 92% capture and 6% wrong-commit, both best-in-suite. The strongest model also produces the strongest agent, but only with the right threshold underneath it. And **default-threshold large-v3 has the worst escalation F1 of any run in the sweep**, including tiny.en. The most capable model with the wrong threshold ships more wrong commits than the least capable model with default settings. The fix is genuinely cheap — a one-line config change, computable from any held-out set that includes impossible cases. There is no model-quality argument for keeping a stale threshold. The only reason this fix is non-trivial is that *the regression that requires it is invisible from the standard benchmark shape*.
+
+## Deeper dive: what `exp(avg_logprob)` actually measures, and what it doesn't
+
+The threshold-recalibration fix works — but it works for the wrong reason, and it is worth saying clearly what reason that is. The whole post is built on a single confidence signal, and that signal is doing something more specific than its name suggests.
+
+`exp(avg_logprob)` is the geometric mean of per-token softmax probabilities over the decoded output.[^2] Conceptually it answers a narrow question: *given that the decoder has just emitted these specific tokens, how decisively did it commit to each of them on average?* That is it. It's a measure of the decoder's collective certainty about the tokens it actually picked, not a measure of whether those tokens are right.
+
+It is the default confidence proxy for a reason. It is free — it falls out of the decode pass at zero additional compute. It is bounded in [0, 1] in a way humans can reason about. It is monotonic in something that loosely tracks "the model is sure about its output." And it requires no held-out calibration set, no learned post-hoc model, no separate scoring head. For an out-of-the-box agent that needs *some* confidence signal to gate a policy, it is the obvious thing to reach for.
+
+It also has a known structural failure mode, which is what this post is about. Per-token certainty is "how confident was the model in the tokens it produced," not "how confident should we be that those tokens are right." On in-distribution audio those two correlate cleanly — the model decisively chooses the right tokens, the geometric mean is high, the answer is correct. On out-of-distribution audio they decouple — the model decisively chooses *some* tokens (because it has to choose something) and the per-token certainty can be high on a decode that has nothing to do with the truth. The decoupling appears to grow with model capability, and that growth is the regression this post documents.
+
+Per-model threshold recalibration works, but it is a workaround. It is compensating for a structural problem in the confidence signal by shifting where we draw the line, rather than fixing the signal itself. A few alternatives are worth knowing about, in roughly ascending order of cost and rigor.
+
+**Temperature scaling.** Fit one scalar `T_model` per model on a held-out calibration set by minimizing NLL of `(exp(avg_logprob / T_model), was_correct)` pairs. Resolves systematic over- or under-confidence in a known parametric way. Doesn't fix the structural decoupling between acoustic certainty and semantic correctness, but flattens the most predictable part of the calibration curve. Cheap; one scalar per model; well-studied in the calibration literature. The natural next experiment for this benchmark and one I plan to run.
+
+**Isotonic regression.** Non-parametric monotonic mapping from raw `avg_logprob` to calibrated probability. Doesn't assume a parametric form for the calibration curve, which matters because there is no particular reason to believe Whisper's miscalibration is uniformly temperature-shaped. Needs more calibration data than temperature scaling — hundreds of examples — but is more expressive.
+
+**Multi-feature learned calibrator.** Logistic regression (or a small MLP) over a feature vector richer than `avg_logprob` alone. Whisper exposes several signals: `no_speech_prob` (the model's estimate that the audio contains no speech at all — exactly the right feature for the severe-bucket case), `compression_ratio` (catches repetition and degenerate decoding), output length, per-token logprob variance. A learned calibrator that weights these jointly has a fighting chance to *decouple* the confidence signal from acoustic-token certainty in a way per-model thresholds cannot. This is the experiment I most want to run next: would a properly-calibrated multi-feature signal let one threshold work across all four model sizes, or is the structural decoupling deep enough that per-model thresholds remain necessary even with good calibration? I genuinely do not know which way that goes.
+
+**The orthogonal axis: cost-aware decisions.** Everything above is about getting the confidence number right. None of it is about what to *do* with the right number. A confidence threshold is implicitly a utility function — it asserts that the loss from a wrong commit at confidence `c` equals the loss from an unnecessary escalation at confidence `c`. That assertion is almost never true in production. In most high-stakes voice settings the cost asymmetry is large; a wrong medication name or a wrong account number costs vastly more than a needless escalation. Once you make the asymmetry explicit — `L_wrong_commit` vs. `L_unnecessary_escalation` — the right gate isn't a threshold on calibrated confidence at all. It is an expected-utility decision: commit when `P(correct | confidence) · L_correct + P(wrong | confidence) · L_wrong > L_escalation`. That can give materially different decisions from a confidence threshold even with perfect calibration, especially in domains where the loss asymmetry runs to several orders of magnitude.
+
+For this post I am using a simple threshold on `exp(avg_logprob)` because it is what most deployed voice agents in this shape actually do. The findings stand within that framing. But the framing itself is a choice, and if you are building production voice agents in any high-stakes domain — medical, financial, safety-critical — calibrated multi-feature confidence plus an explicit cost function is the version of this you want to be reaching for.
+
+## What this benchmark caught — and what a different one would have missed
+
+It's worth being concrete about how this experiment would have failed if I'd designed it slightly differently. Each of these is a choice I almost made or could have made; each would have hidden the regression.
+
+**Only watching aggregate accuracy.** A top-line metric like "% of calls where the agent captured a value" climbs monotonically with model size. A CI gate of the form "accuracy must not regress" passes the large-v3 upgrade. The regression in wrong-commit rate — which is where production harm actually lives — never appears in the metric you are watching.
+
+**A benchmark with no adversarial cases.** Even with a wrong-commit metric, the regression only appears in the buckets where the model has the *opportunity* to confidently confabulate. A benchmark composed entirely of "fair" inputs — clean audio, lightly distorted audio, audio you'd be comfortable demoing — would show wrong-commit rates approximately flat across model sizes. In my data the clean bucket is flat at 7% across every recalibrated run. The regression *requires* adversarial inputs to be visible. If an eval suite only contains audio you'd be proud to show your boss, that suite is hiding from you exactly the failure mode you most need to catch.
+
+**Aggregating across difficulty buckets.** The aggregate wrong-commit line in my data climbs from 19% → 24% across the four model sizes — a 5 pp drift across a 100-case study, easy to write off as noise. The same trend in the severe bucket alone runs 0% → 16% → 24% → 64%. The aggregate dilutes the regression in exactly the cases where escalation is the right behavior. Whatever the most production-relevant slice of your inputs is, it needs to be a first-class reported metric, not a row hidden inside a heatmap.
+
+**Labels assigned by intent rather than empirical evidence.** This one almost bit me. The "severe" cases in my benchmark are labeled impossible based on the distortion profile applied at generation time, not based on whether any model could actually recover them. "Severe distortion" and "actually unrecoverable" are different claims, and only the second is the one I care about for grading escalation behavior. I ended up validating recoverability empirically by treating the seven-run ensemble as an oracle: if no model in the ensemble captured a case across either attempt, it is empirically unrecoverable; the right behavior on that case is to escalate. Four cases in lighter buckets turned out to be empirically unrecoverable too, and a benchmark labeled purely by intent would have rewarded the model for escalating on cases the labeler thought were easy.
+
+The general pattern across all four: an eval that measures the wrong thing, on the wrong inputs, in the wrong slicing, with the wrong labels, will all-too-honestly tell you that the regression isn't there.
+
+## Reflections
+
+> "If you don't know where you are going, you might wind up someplace else."
+> — **Yogi Berra**
+
+Whether in life or in evals, it pays to be clear on what you want.
+
+When I built this benchmark I did not predict the model-swap miscalibration bug. If I were building a real production voice agent, the added complexity would surely create opportunities for many other bugs I also wouldn't predict. The lesson here is not "remember to calibrate parameters when you swap models" — that is a recipe, useful for one failure mode and useless for the next one. The lesson is not even "design systems that calibrate themselves so you can set it and forget it" — that is a stronger recipe but still a recipe.
+
+The lesson is that we mostly can't predict in advance which problems will arise, and what we can do instead is be specific about what we care about, and design our evals to surface failure modes *in those dimensions* whether we predicted them or not. That gives us a way to check whether our agent is sufficiently aligned[^3] in the ways we actually care about, ideally before we release it into the wild. In this case I cared not just about transcription accuracy but about preventing confidently-wrong captures. Stating that out loud at the start — and designing one bucket of the benchmark explicitly to test it — is what made the regression visible. The fact that the regression came in a form I didn't see coming was the benchmark working as designed, not me being clever.
+
+A benchmark this narrow won't catch every problem. It will catch the problems in the dimensions it was pointed at. That is the deal you sign when you build one. The discipline is to be honest about which dimensions you care about, and to build benchmarks pointed at those, even when (especially when) you don't yet know what kinds of bugs will show up.
+
+## Addendum: what about end-to-end multimodal models?
+
+The classical voice-agent stack is three boxes: ASR → LLM → TTS. The LLM is the "brain," but it sees only text; it has no access to the raw acoustic signal. That is why the ASR's confidence has to be threaded through to the policy explicitly — without it, the LLM has no basis for judging whether to commit or escalate.
+
+End-to-end multimodal models (GPT-4o realtime, Gemini Live, the various audio-native frontier models, and the speech-to-speech direction Kyutai and others are pushing) collapse some of these boxes. The model itself ingests audio tokens directly and emits speech, with no intermediate text representation. Does that fix the problem this post is about?
+
+Probably not in the way you'd hope. The decoupling of "model's internal confidence" from "correctness of its produced output" is a property of any token-likelihood-based confidence signal, not of the ASR–LLM seam specifically. A multimodal model decoding audio-conditioned text or speech tokens has the same structural opportunity to be confidently wrong on out-of-distribution acoustic input. The shape of the problem may change — you may lose the ASR-as-bottleneck framing, and the model may be better at "I don't know" reasoning because it can attend directly to the acoustic features — but you do not automatically lose the underlying fact that a more capable model trained on more data can produce more plausible-looking hallucinations on inputs at the edge of its distribution. Token-likelihood confidence will follow the model's plausibility judgment rather than ground truth in either architecture.
+
+I have not tested this empirically against a multimodal model. It is the experiment after the experiments on the punchlist.
+
+## Try it yourself
+
+The benchmark, all 200 audio fixtures, all seven `results.json` files, the figures, the catalog generator, the Modal runner, the labeling tooling, and the open-followups punchlist live at [github.com/jackharrisonmohr/voice-agent-eval](https://github.com/jackharrisonmohr/voice-agent-eval). Reproducing the headline table from scratch is seven `modal run` commands and a `finalize_labels.py` invocation — about ten minutes of wall-clock time and roughly twenty cents of Modal compute. The [findings doc](https://github.com/jackharrisonmohr/voice-agent-eval/blob/main/FINDINGS.md) has every per-bucket number and the methodology in full.
+
+If your voice agent is deployed on Whisper and you haven't retuned thresholds since the last model upgrade — go look at your escalation behavior on impossible cases. I would genuinely like to know what you find.
+
+[^1]: Indeed the distortion is both phone-y and phony — the pipeline mimics what you'd hear on a phone call but doesn't fully match what you'd actually get in the wild (codec hops between towers, background conversations, side speech, accent and pronunciation variability are all absent). We're assuming our phony distortion is a decent proxy for the phone-y distortion that real deployments encounter. Concretely: each fixture passes through some subset of a 300–3400 Hz bandpass (the standard phone band), a μ-law codec roundtrip (the standard phone codec, which adds quantization artifacts), additive white noise at a specified SNR, and packet dropout — 250 ms windows zeroed at a configurable per-window probability. Five buckets layer these in increasing severity; severe is bandpass + μ-law + −12 dB SNR + 250 ms dropouts at 55% per-window. All deterministic with seeded RNG; the catalog regenerates identically.
+
+[^2]: Strictly: `exp((1/N) · Σ log p(token_i))` — the exponentiated arithmetic mean of log-probabilities, which equals the geometric mean of the raw probabilities. Whisper exposes this directly as `avg_logprob` in its segment output; `exp()` puts it back on the [0, 1] scale.
+
+[^3]: This is of course a very small, practical, near-term version of the far grander and more serious AI alignment problem — and is categorically different from it. The long-horizon alignment of superintelligent systems raises some pretty deep and open questions for science and philosophy; specifying what you want from a country of geniuses in a datacenter is way harder than specifying what you want from your call-center customer support agent. But the *shape* of the problem rhymes: be specific about what you actually care about, design evaluations that surface failure modes in those dimensions, and don't assume that a more capable model is automatically a safer one.
