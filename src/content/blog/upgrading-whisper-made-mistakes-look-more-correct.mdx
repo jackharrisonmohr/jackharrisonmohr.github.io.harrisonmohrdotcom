@@ -7,6 +7,8 @@ draft: false
 
 import Callout from "../../components/mdx/Callout.astro";
 import Figure from "../../components/mdx/Figure.astro";
+import AudioSample from "../../components/mdx/AudioSample.astro";
+import AgentFlowDemo from "../../components/mdx/AgentFlowDemo.astro";
 
 *A case study in why narrow benchmarks with adversarial cases catch the failure modes that matter.*
 
@@ -64,6 +66,25 @@ def decide(asr_text: str, confidence: float) -> Action:
 
 Three lines. The whole policy. Most of this post is about the constant `0.55` and how much work it's doing that nobody looks at.
 
+<AgentFlowDemo />
+
+Here is what a *clean* fixture sounds like, and how each of the four Whisper sizes handles it:
+
+<AudioSample
+  src="/audio/asr-calibration/cle_001_attempt1.wav"
+  canonical="SX1185"
+  bucket="clean"
+  caption="Case cle_001 — the easy case. All four models capture correctly; confidence climbs cleanly with model size. This is what a model upgrade is supposed to look like."
+  results={[
+    { model: "tiny.en",   output: "SX1185", confidence: 0.57, outcome: "ok" },
+    { model: "small.en",  output: "SX1185", confidence: 0.61, outcome: "ok" },
+    { model: "medium.en", output: "SX1185", confidence: 0.70, outcome: "ok" },
+    { model: "large-v3",  output: "SX1185", confidence: 0.83, outcome: "ok" },
+  ]}
+/>
+
+You can hear what the speaker says. So can every model in the lineup. The interesting cases — the ones the rest of the post is about — are where the audio degrades to the point where some models *should* stop trusting what they hear, and the question becomes whether they do.
+
 ### A note on what the benchmark deliberately ignores
 
 The benchmark cheats on every dimension that isn't load-bearing for the failure mode I wanted to test, and the cheating is the point. There is no LLM "brain" in this agent — it is fully deterministic; the only source of variability across runs is the ASR. There is no preceding conversation, no turn-taking, no barge-ins, no end-pointing, no latency budget. The benchmark isn't even real-time; it is turn-based and runs from saved audio files. (There is an optional FastAPI harness to make a runner-vs-agent split possible, but the runs in this post all use the in-process path.)
@@ -111,34 +132,49 @@ It is tempting to look at this trend and supply an immediate causal story. Bigge
 
 **Case `hea_071`. Canonical `CLM854254`. Heavy distortion.**
 
-```
-tiny.en     ESCALATE                       (conf 0.49, garbled output)
-small.en    OK   CLM854254                 (conf 0.78)
-medium.en   OK   CLM854254                 (conf 0.76)
-large-v3    WRONG  VCLM854254              (conf 0.89)
-```
+<AudioSample
+  src="/audio/asr-calibration/hea_071_attempt1.wav"
+  canonical="CLM854254"
+  bucket="heavy"
+  results={[
+    { model: "tiny.en",   output: "M85454",     raw: "She has been farming Elizimlema and has been Mike 8-5-4-5-4.", confidence: 0.49, outcome: "escalate" },
+    { model: "small.en",  output: "CLM854254",  raw: "C as in Charlie, L as in Lima, M as in Mike, 8-5-4-2-5-4",     confidence: 0.78, outcome: "ok" },
+    { model: "medium.en", output: "CLM854254",  raw: "C as in Charlie, L as in Lima, M as in Mike, 854254.",         confidence: 0.76, outcome: "ok" },
+    { model: "large-v3",  output: "VCLM854254", raw: "V as in Charlie, L as in Lima, M as in Mike, 854254.",         confidence: 0.89, outcome: "wrong" },
+  ]}
+/>
 
 tiny.en correctly bails. small.en and medium.en — the middle of the capability range — both transcribe the ID correctly. large-v3 hallucinates a phantom `V` at the front of the string and commits with confidence *higher* than the smaller models that got it right. The proposed-mechanism story: there is a moment of voiceless friction at the start of the utterance; small and medium ignore it; large's stronger acoustic prior decides it's a letter, and its language prior makes `VCLM` look plausible enough (you've seen `VIN`, `VAT`, `VLD`) that per-token confidences stay high.
 
 **Case `sev_092`. Canonical `128ZT412`. Severe distortion.**
 
-```
-tiny.en     ESCALATE
-small.en    ESCALATE        ("Thanks for watching!")
-medium.en   ESCALATE
-large-v3    WRONG  38807416                (conf 0.70)
-```
+<AudioSample
+  src="/audio/asr-calibration/sev_092_attempt1.wav"
+  canonical="128ZT412"
+  bucket="severe"
+  results={[
+    { model: "tiny.en",   output: null,       raw: null,                    confidence: null, outcome: "escalate" },
+    { model: "small.en",  output: null,       raw: "Thanks for watching!",  confidence: 0.27, outcome: "escalate" },
+    { model: "medium.en", output: null,       raw: null,                    confidence: null, outcome: "escalate" },
+    { model: "large-v3",  output: "38807416", raw: "3-8-8-0-7-4-1-6",       confidence: 0.70, outcome: "wrong" },
+  ]}
+/>
 
 Three of four models output something the parser can't accept as an ID and escalate. large-v3 produces an eight-digit string bearing no resemblance to the canonical, with confidence well above the commit threshold.
 
-**Case `sev_098`. Canonical `117PS896`. Severe distortion.** This one is the most interesting because *every* model wrong-commits, but watch how the wrong outputs evolve:
+**Case `sev_098`. Canonical `117PS896`. Severe distortion.** This one is the most interesting because *every* model that doesn't escalate wrong-commits, but watch how the wrong outputs evolve:
 
-```
-tiny.en     ESCALATE       ("What's going on inside the camera?...")
-small.en    WRONG  1173STANDS9            (conf 0.56)
-medium.en   WRONG  11787879               (conf 0.59)
-large-v3    WRONG  1176789                (conf 0.77)
-```
+<AudioSample
+  src="/audio/asr-calibration/sev_098_attempt1.wav"
+  canonical="117PS896"
+  bucket="severe"
+  results={[
+    { model: "tiny.en",   output: "SSS",         raw: "What's going on inside the camera? What's going on inside the camera?...",       confidence: 0.50, outcome: "escalate" },
+    { model: "small.en",  output: "1173STANDS9", raw: "One, one, seven, three, as it happens, as it stands, nine.",                     confidence: 0.56, outcome: "wrong" },
+    { model: "medium.en", output: "11787879",    raw: "One, one, seven, eight, seven, eight, seven, nine.",                              confidence: 0.59, outcome: "wrong" },
+    { model: "large-v3",  output: "1176789",     raw: "1, 1, 7, 6, 7, 8, 9,",                                                            confidence: 0.77, outcome: "wrong" },
+  ]}
+/>
 
 The errors don't get *less wrong* across model sizes — they get *more plausible-looking*. small.en's output contains the word "STANDS"; any half-decent downstream validator would flag it immediately. medium.en drops the letters but produces an eight-digit string that's the wrong length for the schema. large-v3 produces a clean seven-digit string that, structurally, looks exactly like the kind of identifier a downstream system might accept. And it's the most confident of the three.
 

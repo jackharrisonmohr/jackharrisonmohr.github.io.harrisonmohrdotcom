@@ -1,0 +1,116 @@
+---
+interface ModelResult {
+  model: string;
+  output: string | null;       // parsed output, null = no parseable output
+  raw?: string | null;         // raw ASR transcript, shown as a secondary line
+  confidence: number | null;   // null = N/A (e.g. blank transcript)
+  outcome: "ok" | "wrong" | "escalate";
+}
+
+interface Props {
+  src: string;
+  canonical: string;
+  bucket: string;
+  caption?: string;
+  results: ModelResult[];
+}
+
+const { src, canonical, bucket, caption, results } = Astro.props;
+
+const bucketLabels: Record<string, string> = {
+  clean: "clean",
+  light: "light",
+  moderate: "moderate",
+  heavy: "heavy",
+  severe: "severe",
+};
+
+const outcomeLabels = {
+  ok: "OK",
+  wrong: "WRONG",
+  escalate: "ESCALATE",
+};
+---
+
+<figure class="audio-sample my-8 not-prose">
+  <div class="rounded-lg border border-border bg-text/[0.015] p-5">
+    <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-4">
+      <span class="text-[10px] font-medium uppercase tracking-widest text-muted-light">
+        {bucketLabels[bucket] ?? bucket}
+      </span>
+      <span class="text-xs text-muted">
+        canonical: <span class="font-mono text-text">{canonical}</span>
+      </span>
+    </div>
+
+    <audio controls preload="none" src={src} class="w-full mb-4">
+      Your browser does not support the audio element.
+    </audio>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-muted">
+            <th class="text-left py-1 font-medium uppercase tracking-wider text-[10px]">model</th>
+            <th class="text-left py-1 font-medium uppercase tracking-wider text-[10px]">parsed output</th>
+            <th class="text-right py-1 font-medium uppercase tracking-wider text-[10px]">conf</th>
+            <th class="text-right py-1 font-medium uppercase tracking-wider text-[10px]">action</th>
+          </tr>
+        </thead>
+        <tbody class="font-mono">
+          {results.map((r) => (
+            <tr class="border-t border-border/40 align-top">
+              <td class="py-2 pr-3 whitespace-nowrap">{r.model}</td>
+              <td class="py-2 pr-3 text-text/80">
+                <div>{r.output ?? <span class="text-muted-light">—</span>}</div>
+                {r.raw && (
+                  <div class="text-[11px] italic text-muted-light mt-0.5 leading-snug">
+                    {r.raw}
+                  </div>
+                )}
+              </td>
+              <td class="py-2 pr-3 text-right text-muted whitespace-nowrap">
+                {r.confidence !== null ? r.confidence.toFixed(2) : "—"}
+              </td>
+              <td class:list={["py-2 text-right font-semibold tracking-wide whitespace-nowrap", `outcome-${r.outcome}`]}>
+                {outcomeLabels[r.outcome]}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {caption && (
+    <figcaption class="text-sm text-muted text-center mt-3">
+      {caption}
+    </figcaption>
+  )}
+</figure>
+
+<style>
+  .audio-sample audio {
+    color-scheme: light;
+    height: 36px;
+  }
+  :global(html.dark) .audio-sample audio {
+    color-scheme: dark;
+  }
+
+  .outcome-ok {
+    color: rgb(90 130 80);
+  }
+  :global(html.dark) .outcome-ok {
+    color: rgb(140 180 130);
+  }
+  .outcome-wrong {
+    color: rgb(165 110 50);
+  }
+  :global(html.dark) .outcome-wrong {
+    color: rgb(200 150 80);
+  }
+  .outcome-escalate {
+    color: rgb(var(--color-muted));
+  }
+</style>

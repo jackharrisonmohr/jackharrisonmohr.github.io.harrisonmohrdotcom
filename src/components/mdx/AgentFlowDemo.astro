@@ -1,0 +1,591 @@
+---
+// Interactive replacement for fig_00_agent_flow. Plays one of three audio
+// scenarios and walks a "data packet" through the pipeline, swapping the
+// live readout (ASR text, confidence, action, grading) as the dot moves.
+// Audio files already exist under /audio/asr-calibration/ from <AudioSample>.
+---
+
+<figure class="afd my-8 not-prose">
+  <div class="afd-controls" role="tablist" aria-label="Audio scenarios">
+    <button class="afd-btn" data-scenario="clean" role="tab" aria-selected="false">
+      <span class="afd-btn-tag afd-tag-clean">clean</span>
+      <span class="afd-btn-label">cle_001</span>
+    </button>
+    <button class="afd-btn" data-scenario="heavy" role="tab" aria-selected="false">
+      <span class="afd-btn-tag afd-tag-heavy">heavy</span>
+      <span class="afd-btn-label">hea_071</span>
+    </button>
+    <button class="afd-btn" data-scenario="severe" role="tab" aria-selected="false">
+      <span class="afd-btn-tag afd-tag-severe">severe</span>
+      <span class="afd-btn-label">sev_092</span>
+    </button>
+    <button class="afd-btn afd-btn-reset" data-scenario="reset" aria-label="Reset to idle">↺ reset</button>
+  </div>
+
+  <div class="afd-svg-wrap">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 320" role="img" aria-labelledby="afd-title afd-desc" preserveAspectRatio="xMidYMid meet">
+      <title id="afd-title">Interactive voice-agent data flow</title>
+      <desc id="afd-desc">Toggle one of three audio scenarios to play the clip and animate a data packet through Whisper, parser, policy gate, the chosen action outcome, and back to the benchmark's grading component.</desc>
+
+      <defs>
+        <marker id="afd-ah-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#8a8279"/>
+        </marker>
+        <marker id="afd-ah-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#b25840"/>
+        </marker>
+        <marker id="afd-ah-o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#c4884a"/>
+        </marker>
+        <marker id="afd-ah-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#5a7c3f"/>
+        </marker>
+      </defs>
+
+      <!-- Agent bounding box -->
+      <rect x="158" y="48" width="737" height="258" rx="9" ry="9"
+            fill="none" stroke="#b8b0a6" stroke-width="1.2" stroke-dasharray="6 4"/>
+
+      <!-- Benchmark-side: Audio + Grading -->
+      <rect class="afd-comp" data-step="audio"
+            x="20" y="140" width="115" height="72" rx="6" ry="6"
+            fill="#fdfaf3" stroke="#b8b0a6" stroke-width="1"/>
+      <rect class="afd-comp afd-grading" data-step="grading"
+            x="950" y="140" width="115" height="72" rx="6" ry="6"
+            fill="#fdfaf3" stroke="#b8b0a6" stroke-width="1"/>
+
+      <!-- Agent pipeline -->
+      <rect class="afd-comp" data-step="whisper"
+            x="180" y="140" width="140" height="72" rx="6" ry="6"
+            fill="#fdfaf3" stroke="#b8b0a6" stroke-width="1"/>
+      <rect class="afd-comp" data-step="parser"
+            x="420" y="140" width="120" height="72" rx="6" ry="6"
+            fill="#fdfaf3" stroke="#b8b0a6" stroke-width="1"/>
+      <rect class="afd-comp" data-step="policy"
+            x="640" y="140" width="120" height="72" rx="6" ry="6"
+            fill="#f5efe2" stroke="#8a8279" stroke-width="1.3"/>
+
+      <!-- Outcomes -->
+      <rect class="afd-comp" data-step="escalate"
+            x="815" y="55"  width="62" height="50" rx="6" ry="6"
+            fill="#fdfaf3" stroke="#b25840" stroke-width="1.6"/>
+      <rect class="afd-comp" data-step="askrepeat"
+            x="815" y="149" width="62" height="50" rx="6" ry="6"
+            fill="#fdfaf3" stroke="#c4884a" stroke-width="1.6"/>
+      <rect class="afd-comp" data-step="commit"
+            x="815" y="243" width="62" height="50" rx="6" ry="6"
+            fill="#fdfaf3" stroke="#5a7c3f" stroke-width="1.6"/>
+
+      <!-- Forward pipeline arrows -->
+      <line class="afd-arrow" data-arrow="audio-whisper" x1="137" y1="176" x2="178" y2="176" stroke="#8a8279" stroke-width="1.2" marker-end="url(#afd-ah-n)"/>
+      <line class="afd-arrow" data-arrow="whisper-parser" x1="322" y1="176" x2="418" y2="176" stroke="#8a8279" stroke-width="1.2" marker-end="url(#afd-ah-n)"/>
+      <line class="afd-arrow" data-arrow="parser-policy" x1="542" y1="176" x2="638" y2="176" stroke="#8a8279" stroke-width="1.2" marker-end="url(#afd-ah-n)"/>
+
+      <!-- Policy → outcomes branches -->
+      <path class="afd-arrow afd-branch-arrow" data-arrow="branch-escalate" d="M 760 160 C 790 160, 790 80,  815 80"  fill="none" stroke="#b25840" stroke-width="1.6" marker-end="url(#afd-ah-r)"/>
+      <line class="afd-arrow afd-branch-arrow" data-arrow="branch-askrepeat" x1="760" y1="176" x2="810" y2="176" stroke="#c4884a" stroke-width="1.6" marker-end="url(#afd-ah-o)"/>
+      <path class="afd-arrow afd-branch-arrow" data-arrow="branch-commit" d="M 760 192 C 790 192, 790 268, 815 268" fill="none" stroke="#5a7c3f" stroke-width="1.6" marker-end="url(#afd-ah-g)"/>
+
+      <!-- Outcomes → Grading return arrows -->
+      <path class="afd-arrow afd-return-arrow" data-arrow="return-escalate" d="M 877 80  C 905 80,  925 176, 948 176" fill="none" stroke="#b25840" stroke-width="1.6" marker-end="url(#afd-ah-r)"/>
+      <line class="afd-arrow afd-return-arrow" data-arrow="return-askrepeat" x1="877" y1="176" x2="948" y2="176" stroke="#c4884a" stroke-width="1.6" marker-end="url(#afd-ah-o)"/>
+      <path class="afd-arrow afd-return-arrow" data-arrow="return-commit" d="M 877 268 C 905 268, 925 176, 948 176" fill="none" stroke="#5a7c3f" stroke-width="1.6" marker-end="url(#afd-ah-g)"/>
+
+      <!-- Static text — uses inline styles so they're guaranteed to apply -->
+      <g>
+        <text style="font-size:13px;fill:#3d3530;font-weight:600;font-family:Inter,system-ui,sans-serif" x="20" y="24">How the agent decides — one audio clip in, one of three actions out, one score back</text>
+        <text style="font-size:11px;fill:#8a8279;font-family:Inter,system-ui,sans-serif" x="20" y="42">Pick a scenario to watch a real fixture flow through the pipeline.</text>
+
+        <text class="afd-group-label" style="font-size:9.5px;font-weight:600;fill:#8a8279;letter-spacing:1.2px;font-family:Inter,system-ui,sans-serif" x="77"   y="129" text-anchor="middle">BENCHMARK</text>
+        <text class="afd-group-label" style="font-size:9.5px;font-weight:600;fill:#8a8279;letter-spacing:1.2px;font-family:Inter,system-ui,sans-serif" x="168"  y="65"  text-anchor="start">AGENT UNDER TEST</text>
+        <text class="afd-group-label" style="font-size:9.5px;font-weight:600;fill:#8a8279;letter-spacing:1.2px;font-family:Inter,system-ui,sans-serif" x="1007" y="129" text-anchor="middle">BENCHMARK</text>
+
+        <text class="afd-b-title" x="77"   y="174" text-anchor="middle">Audio fixture</text>
+        <text class="afd-b-sub"   x="77"   y="192" text-anchor="middle" data-text="audio-sub">short .wav</text>
+
+        <text class="afd-b-title" x="1007" y="174" text-anchor="middle">Grading</text>
+        <text class="afd-b-sub"   x="1007" y="192" text-anchor="middle" data-text="grading-sub">vs. canonical ID</text>
+
+        <text class="afd-b-title" x="250" y="174" text-anchor="middle">Whisper ASR</text>
+        <text class="afd-b-sub"   x="250" y="192" text-anchor="middle" data-text="whisper-sub">faster-whisper · 4 sizes</text>
+
+        <text class="afd-b-title" x="480" y="174" text-anchor="middle">Parse ID shape</text>
+        <text class="afd-b-sub"   x="480" y="192" text-anchor="middle">uppercase · strip · validate</text>
+
+        <text class="afd-b-title" x="700" y="162" text-anchor="middle">Policy gate</text>
+        <text class="afd-b-sub"   x="700" y="180" text-anchor="middle">ESCALATE = 0.40</text>
+        <text class="afd-b-sub"   x="700" y="196" text-anchor="middle">CONFIRM = 0.55</text>
+
+        <!-- Pipe labels (live-updateable) -->
+        <text class="afd-pipe" data-text="pipe-audio"  x="158" y="168" text-anchor="middle">audio</text>
+        <text class="afd-pipe" data-text="pipe-asr"    x="370" y="168" text-anchor="middle">text + avg_logprob</text>
+        <text class="afd-pipe" data-text="pipe-parsed" x="590" y="168" text-anchor="middle">parsed_id or None</text>
+        <text class="afd-pipe" data-text="pipe-action" x="912" y="168" text-anchor="middle">chosen action</text>
+
+        <!-- Branch labels -->
+        <text class="afd-branch" x="766" y="114" fill="#b25840">parsed = None</text>
+        <text class="afd-branch" x="766" y="128" fill="#b25840">or conf &lt; 0.40</text>
+        <text class="afd-branch" x="785" y="169" text-anchor="middle" fill="#c4884a">conf &lt; 0.55</text>
+        <text class="afd-branch" x="766" y="234" fill="#5a7c3f">conf ≥ 0.55</text>
+
+        <!-- Outcome titles -->
+        <text class="afd-o-title" x="846" y="80"  text-anchor="middle" fill="#b25840">Escalate</text>
+        <text class="afd-o-sub"   x="846" y="95"  text-anchor="middle">to human</text>
+
+        <text class="afd-o-title" x="846" y="174" text-anchor="middle" fill="#c4884a">Ask repeat</text>
+        <text class="afd-o-sub"   x="846" y="189" text-anchor="middle">one retry</text>
+
+        <text class="afd-o-title" x="846" y="268" text-anchor="middle" fill="#5a7c3f">Commit</text>
+        <text class="afd-o-sub"   x="846" y="283" text-anchor="middle">parsed_id</text>
+      </g>
+
+      <!-- The moving "data packet" — hidden until a scenario starts -->
+      <circle class="afd-packet afd-hidden" data-packet cx="77" cy="176" r="6" fill="#3d3530" stroke="#fdfaf3" stroke-width="1.5"/>
+    </svg>
+  </div>
+
+  <div class="afd-readout">
+    <audio class="afd-player" preload="metadata"></audio>
+    <div class="afd-readout-grid">
+      <div class="afd-readout-cell">
+        <div class="afd-readout-key">Canonical ID</div>
+        <div class="afd-readout-val" data-readout="canonical">—</div>
+      </div>
+      <div class="afd-readout-cell">
+        <div class="afd-readout-key">Whisper model</div>
+        <div class="afd-readout-val" data-readout="model">—</div>
+      </div>
+      <div class="afd-readout-cell">
+        <div class="afd-readout-key">ASR output</div>
+        <div class="afd-readout-val afd-mono" data-readout="asr">—</div>
+      </div>
+      <div class="afd-readout-cell">
+        <div class="afd-readout-key">avg_logprob → conf</div>
+        <div class="afd-readout-val afd-mono" data-readout="conf">—</div>
+      </div>
+      <div class="afd-readout-cell">
+        <div class="afd-readout-key">Parsed</div>
+        <div class="afd-readout-val afd-mono" data-readout="parsed">—</div>
+      </div>
+      <div class="afd-readout-cell">
+        <div class="afd-readout-key">Action · Grading</div>
+        <div class="afd-readout-val" data-readout="result">—</div>
+      </div>
+    </div>
+  </div>
+
+  <figcaption class="afd-cap">
+    Live walk through the agent. Toggle a scenario to play the audio and watch the packet move. Same benchmark, same policy thresholds (0.40 / 0.55); only the Whisper model and the audio change.
+  </figcaption>
+</figure>
+
+<style>
+  .afd {
+    border: 1px solid rgb(var(--color-border));
+    border-radius: 12px;
+    padding: 1.25rem;
+    background: rgb(var(--color-bg));
+  }
+  .afd-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    align-items: center;
+  }
+  .afd-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgb(var(--color-bg));
+    border: 1px solid rgb(var(--color-border));
+    border-radius: 8px;
+    padding: 0.45rem 0.75rem;
+    font-family: inherit;
+    font-size: 0.85rem;
+    color: rgb(var(--color-text));
+    cursor: pointer;
+    transition: border-color .15s, background .15s, box-shadow .15s, transform .05s;
+  }
+  .afd-btn:hover { border-color: rgb(var(--color-muted)); }
+  .afd-btn:active { transform: translateY(1px); }
+  .afd-btn[aria-selected="true"] {
+    border-color: #8a8279;
+    box-shadow: 0 0 0 2px rgba(178, 88, 64, 0.18);
+  }
+  .afd-btn-reset {
+    margin-left: auto;
+    color: rgb(var(--color-muted));
+    font-size: 0.8rem;
+  }
+  .afd-btn-tag {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    color: #3d3530;
+  }
+  .afd-tag-clean  { background: #e6efdc; }
+  .afd-tag-heavy  { background: #f0dcc8; }
+  .afd-tag-severe { background: #ecd1c8; }
+  .afd-btn-label {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.78rem;
+    color: rgb(var(--color-muted));
+  }
+
+  .afd-svg-wrap {
+    width: 100%;
+    overflow-x: auto;
+  }
+  .afd-svg-wrap svg {
+    width: 100%;
+    height: auto;
+    min-width: 720px;
+    display: block;
+  }
+
+  /* SVG text styling (scoped via .afd-svg-wrap) */
+  .afd-svg-wrap svg .afd-b-title  { font: 600 12px/1 'Inter', system-ui, sans-serif; fill: #3d3530; }
+  .afd-svg-wrap svg .afd-b-sub    { font: 400 9.5px/1 'Inter', system-ui, sans-serif; fill: #8a8279; }
+  .afd-svg-wrap svg .afd-pipe     { font: italic 400 9.5px/1 'Inter', system-ui, sans-serif; fill: #8a8279; transition: fill .25s; }
+  .afd-svg-wrap svg .afd-pipe.afd-pipe-live { font-style: normal; font-weight: 600; fill: #3d3530; }
+  .afd-svg-wrap svg .afd-branch   { font: 600 9.5px/1 'Inter', system-ui, sans-serif; transition: opacity .25s; }
+  .afd-svg-wrap svg .afd-o-title  { font: 600 12px/1 'Inter', system-ui, sans-serif; }
+  .afd-svg-wrap svg .afd-o-sub    { font: 400 9.5px/1 'Inter', system-ui, sans-serif; fill: #8a8279; }
+
+  /* SVG component-box transitions */
+  .afd-svg-wrap svg .afd-comp  { transition: stroke .25s, stroke-width .25s, filter .25s; }
+  .afd-svg-wrap svg .afd-comp.afd-active {
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 6px rgba(180, 88, 64, 0.35));
+  }
+  .afd-svg-wrap svg .afd-comp.afd-dim { opacity: 0.45; }
+  .afd-svg-wrap svg .afd-arrow { transition: stroke-width .25s, opacity .25s; }
+  .afd-svg-wrap svg .afd-arrow.afd-dim  { opacity: 0.2; }
+  .afd-svg-wrap svg .afd-arrow.afd-flow { stroke-width: 3.2; }
+
+  /* Grading box state colors */
+  .afd-svg-wrap svg .afd-grading.afd-ok    { stroke: #5a7c3f; stroke-width: 2.5; }
+  .afd-svg-wrap svg .afd-grading.afd-bad   { stroke: #b25840; stroke-width: 2.5; }
+  .afd-svg-wrap svg .afd-grading.afd-warn  { stroke: #c4884a; stroke-width: 2.5; }
+
+  /* Packet */
+  .afd-svg-wrap svg .afd-packet { transition: opacity .2s; }
+  .afd-svg-wrap svg .afd-packet.afd-hidden { opacity: 0; }
+
+  .afd-readout {
+    margin-top: 1rem;
+  }
+  .afd-readout audio {
+    width: 100%;
+    height: 36px;
+    margin-bottom: 0.75rem;
+  }
+  .afd-readout-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem 1rem;
+    padding: 0.75rem 1rem;
+    background: rgba(248, 240, 226, 0.4);
+    border: 1px solid rgb(var(--color-border));
+    border-radius: 8px;
+  }
+  @media (max-width: 640px) {
+    .afd-readout-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .afd-readout-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+  .afd-readout-key {
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgb(var(--color-muted));
+  }
+  .afd-readout-val {
+    font-size: 0.9rem;
+    color: rgb(var(--color-text));
+    font-weight: 600;
+    word-break: break-word;
+    line-height: 1.3;
+  }
+  .afd-readout-val.afd-mono {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+  .afd-readout-val.afd-ok   { color: #5a7c3f; }
+  .afd-readout-val.afd-bad  { color: #b25840; }
+  .afd-readout-val.afd-warn { color: #c4884a; }
+
+  .afd-cap {
+    margin-top: 0.75rem;
+    font-size: 0.85rem;
+    color: rgb(var(--color-muted));
+    text-align: center;
+  }
+</style>
+
+<script>
+  type Scenario = {
+    label: string;
+    audio: string;
+    canonical: string;
+    model: string;
+    asr: string;
+    conf: number | null;
+    parsed: string | null;
+    branch: 'escalate' | 'askrepeat' | 'commit';
+    action: string;
+    grading: 'ok' | 'wrong' | 'warn';
+    gradingLabel: string;
+  };
+
+  const SCENARIOS: Record<string, Scenario> = {
+    clean: {
+      label: 'Clean',
+      audio: '/audio/asr-calibration/cle_001_attempt1.wav',
+      canonical: 'SX1185',
+      model: 'large-v3',
+      asr: 'SX1185',
+      conf: 0.83,
+      parsed: 'SX1185',
+      branch: 'commit',
+      action: 'Commit SX1185',
+      grading: 'ok',
+      gradingLabel: '✓ correct',
+    },
+    heavy: {
+      label: 'Heavy distortion',
+      audio: '/audio/asr-calibration/hea_071_attempt1.wav',
+      canonical: 'CLM854254',
+      model: 'tiny.en',
+      asr: '"…Mike 8-5-4-5-4."',
+      conf: 0.49,
+      parsed: null,
+      branch: 'escalate',
+      action: 'Escalate to human',
+      grading: 'warn',
+      gradingLabel: '⚠ safe (escalated)',
+    },
+    severe: {
+      label: 'Severe distortion',
+      audio: '/audio/asr-calibration/sev_092_attempt1.wav',
+      canonical: '128ZT412',
+      model: 'large-v3',
+      asr: '"3-8-8-0-7-4-1-6"',
+      conf: 0.70,
+      parsed: '38807416',
+      branch: 'commit',
+      action: 'Commit 38807416',
+      grading: 'wrong',
+      gradingLabel: '✗ wrong',
+    },
+  };
+
+  const WAYPOINTS: Record<string, [number, number]> = {
+    escalate:  [846, 80],
+    askrepeat: [846, 174],
+    commit:    [846, 268],
+  };
+
+  function colorFor(branch: string) {
+    if (branch === 'escalate')  return '#b25840';
+    if (branch === 'askrepeat') return '#c4884a';
+    return '#5a7c3f';
+  }
+  function fmtConf(c: number | null) {
+    return c === null ? 'n/a' : c.toFixed(2);
+  }
+
+  function initDemo(fig: HTMLElement) {
+    const svg = fig.querySelector('svg') as SVGSVGElement;
+    const player = fig.querySelector('.afd-player') as HTMLAudioElement;
+    const packet = fig.querySelector('[data-packet]') as SVGCircleElement;
+    const buttons = fig.querySelectorAll<HTMLButtonElement>('.afd-btn');
+
+    let timers: number[] = [];
+    let animFrame: number | null = null;
+    let runId = 0;
+
+    const q = (sel: string) => fig.querySelector(sel);
+    const qa = (sel: string) => fig.querySelectorAll(sel);
+
+    function setText(key: string, value: string) {
+      const el = fig.querySelector(`[data-text="${key}"]`);
+      if (el) el.textContent = value;
+    }
+    function setReadout(key: string, value: string, cls?: string) {
+      const el = fig.querySelector(`[data-readout="${key}"]`) as HTMLElement | null;
+      if (!el) return;
+      el.textContent = value;
+      el.classList.remove('afd-ok', 'afd-bad', 'afd-warn');
+      if (cls) el.classList.add(cls);
+    }
+
+    function resetAll() {
+      runId++;
+      timers.forEach((t) => clearTimeout(t));
+      timers = [];
+      if (animFrame !== null) {
+        cancelAnimationFrame(animFrame);
+        animFrame = null;
+      }
+      try { player.pause(); player.currentTime = 0; } catch {}
+
+      qa('.afd-comp').forEach((el) => el.classList.remove('afd-active', 'afd-dim'));
+      qa('.afd-arrow').forEach((el) => el.classList.remove('afd-flow', 'afd-dim'));
+      qa('.afd-pipe').forEach((el) => el.classList.remove('afd-pipe-live'));
+
+      setText('pipe-audio', 'audio');
+      setText('pipe-asr', 'text + avg_logprob');
+      setText('pipe-parsed', 'parsed_id or None');
+      setText('pipe-action', 'chosen action');
+      setText('whisper-sub', 'faster-whisper · 4 sizes');
+      setText('audio-sub', 'short .wav');
+      setText('grading-sub', 'vs. canonical ID');
+
+      const grading = q('[data-step="grading"]');
+      grading?.classList.remove('afd-ok', 'afd-bad', 'afd-warn');
+
+      setReadout('canonical', '—');
+      setReadout('model', '—');
+      setReadout('asr', '—');
+      setReadout('conf', '—');
+      setReadout('parsed', '—');
+      setReadout('result', '—');
+
+      packet.classList.add('afd-hidden');
+      packet.setAttribute('cx', '77');
+      packet.setAttribute('cy', '176');
+
+      buttons.forEach((b) => b.setAttribute('aria-selected', 'false'));
+    }
+
+    function activate(step: string) {
+      q(`[data-step="${step}"]`)?.classList.add('afd-active');
+    }
+    function flowArrow(arrow: string) {
+      q(`[data-arrow="${arrow}"]`)?.classList.add('afd-flow');
+    }
+    function dimUnchosenBranches(chosen: string) {
+      ['escalate', 'askrepeat', 'commit'].forEach((b) => {
+        if (b === chosen) return;
+        q(`[data-arrow="branch-${b}"]`)?.classList.add('afd-dim');
+        q(`[data-arrow="return-${b}"]`)?.classList.add('afd-dim');
+        q(`[data-step="${b}"]`)?.classList.add('afd-dim');
+      });
+    }
+
+    function movePacketTo(target: [number, number], duration: number, myRun: number) {
+      return new Promise<void>((resolve) => {
+        const startX = parseFloat(packet.getAttribute('cx') || '77');
+        const startY = parseFloat(packet.getAttribute('cy') || '176');
+        const [tx, ty] = target;
+        const start = performance.now();
+        function step(now: number) {
+          if (myRun !== runId) { resolve(); return; }
+          const t = Math.min(1, (now - start) / duration);
+          const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+          packet.setAttribute('cx', String(startX + (tx - startX) * e));
+          packet.setAttribute('cy', String(startY + (ty - startY) * e));
+          if (t < 1) {
+            animFrame = requestAnimationFrame(step);
+          } else {
+            animFrame = null;
+            resolve();
+          }
+        }
+        animFrame = requestAnimationFrame(step);
+      });
+    }
+
+    async function runScenario(name: string) {
+      const s = SCENARIOS[name];
+      if (!s) return;
+      resetAll();
+      const myRun = runId;
+      buttons.forEach((b) => b.setAttribute('aria-selected', b.dataset.scenario === name ? 'true' : 'false'));
+
+      setReadout('canonical', s.canonical);
+      setReadout('model', s.model);
+      const c = colorFor(s.branch);
+
+      try {
+        player.src = s.audio;
+        await player.play().catch(() => {});
+      } catch {}
+
+      packet.classList.remove('afd-hidden');
+      packet.setAttribute('fill', c);
+
+      activate('audio');
+      flowArrow('audio-whisper');
+      await movePacketTo([250, 176], 600, myRun);
+      if (myRun !== runId) return;
+
+      activate('whisper');
+      setText('whisper-sub', s.model);
+      setText('pipe-asr', `${s.asr} · ${fmtConf(s.conf)}`);
+      q('[data-text="pipe-asr"]')?.classList.add('afd-pipe-live');
+      setReadout('asr', s.asr);
+      setReadout('conf', s.conf === null ? 'n/a' : `${fmtConf(s.conf)}  (exp(avg_logprob))`);
+      flowArrow('whisper-parser');
+      await movePacketTo([480, 176], 550, myRun);
+      if (myRun !== runId) return;
+
+      activate('parser');
+      const parsedDisplay = s.parsed ?? 'None';
+      setText('pipe-parsed', parsedDisplay);
+      q('[data-text="pipe-parsed"]')?.classList.add('afd-pipe-live');
+      setReadout('parsed', parsedDisplay);
+      flowArrow('parser-policy');
+      await movePacketTo([700, 176], 550, myRun);
+      if (myRun !== runId) return;
+
+      activate('policy');
+      dimUnchosenBranches(s.branch);
+      flowArrow(`branch-${s.branch}`);
+      await movePacketTo(WAYPOINTS[s.branch], 600, myRun);
+      if (myRun !== runId) return;
+
+      activate(s.branch);
+      setText('pipe-action', s.action);
+      q('[data-text="pipe-action"]')?.classList.add('afd-pipe-live');
+      flowArrow(`return-${s.branch}`);
+      await movePacketTo([1007, 176], 700, myRun);
+      if (myRun !== runId) return;
+
+      activate('grading');
+      const grading = q('[data-step="grading"]') as SVGRectElement;
+      grading.classList.add(`afd-${s.grading}`);
+      setText('grading-sub', s.gradingLabel);
+      setReadout('result', `${s.action}  ·  ${s.gradingLabel}`, `afd-${s.grading}`);
+
+      const t = window.setTimeout(() => {
+        if (myRun === runId) packet.classList.add('afd-hidden');
+      }, 800);
+      timers.push(t);
+    }
+
+    buttons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const sc = btn.dataset.scenario;
+        if (sc === 'reset' || !sc) {
+          resetAll();
+        } else {
+          runScenario(sc);
+        }
+      });
+    });
+  }
+
+  // Initialize every AgentFlowDemo on the page
+  document.querySelectorAll<HTMLElement>('.afd').forEach(initDemo);
+</script>

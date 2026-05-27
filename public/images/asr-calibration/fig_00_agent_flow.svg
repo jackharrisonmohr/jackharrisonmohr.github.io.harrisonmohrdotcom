@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 320" role="img" aria-labelledby="agent-flow-title agent-flow-desc" preserveAspectRatio="xMidYMid meet">
+  <title id="agent-flow-title">Voice-agent data flow</title>
+  <desc id="agent-flow-desc">A horizontal flow. The benchmark's audio fixture (left) feeds the agent under test (dashed box: Whisper, Parser, Policy gate, three outcomes). Whichever action the agent emits flows back to the benchmark's grading component (right) via three color-coded return arrows. Audio and Grading are both flagged BENCHMARK; the agent sits between them as a peer.</desc>
+  <defs>
+    <marker id="ah-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8a8279"/>
+    </marker>
+    <marker id="ah-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b25840"/>
+    </marker>
+    <marker id="ah-o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c4884a"/>
+    </marker>
+    <marker id="ah-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5a7c3f"/>
+    </marker>
+    <style type="text/css">
+      .f { font-family: 'Inter', 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif; }
+      .t-title  { font-size: 13px; fill: #3d3530; font-weight: 600; }
+      .t-sub    { font-size: 11px; fill: #8a8279; }
+      .b-title  { font-size: 12px; font-weight: 600; fill: #3d3530; }
+      .b-sub    { font-size: 9.5px; fill: #8a8279; }
+      .pipe     { font-size: 9.5px; fill: #8a8279; font-style: italic; }
+      .branch   { font-size: 9.5px; font-weight: 600; }
+      .o-title  { font-size: 12px; font-weight: 600; }
+      .o-sub    { font-size: 9.5px; fill: #8a8279; }
+      .group-label { font-size: 9.5px; font-weight: 600; fill: #8a8279; letter-spacing: 1.2px; }
+    </style>
+  </defs>
+
+  <!-- ============== AGENT bounding box only — benchmark components stand on their own ============== -->
+  <rect x="158" y="48" width="737" height="258" rx="9" ry="9"
+        fill="none" stroke="#b8b0a6" stroke-width="1.2" stroke-dasharray="6 4"/>
+
+  <!-- ============== component boxes ============== -->
+
+  <!-- Benchmark-side: Audio (left), Grading (right) — outside the agent box -->
+  <rect x="20"  y="140" width="115" height="72" rx="6" ry="6" fill="#fdfaf3" stroke="#b8b0a6" stroke-width="1"/>
+  <rect x="950" y="140" width="115" height="72" rx="6" ry="6" fill="#fdfaf3" stroke="#b8b0a6" stroke-width="1"/>
+
+  <!-- Agent pipeline -->
+  <rect x="180" y="140" width="140" height="72" rx="6" ry="6" fill="#fdfaf3" stroke="#b8b0a6" stroke-width="1"/>
+  <rect x="420" y="140" width="120" height="72" rx="6" ry="6" fill="#fdfaf3" stroke="#b8b0a6" stroke-width="1"/>
+  <rect x="640" y="140" width="120" height="72" rx="6" ry="6" fill="#f5efe2" stroke="#8a8279" stroke-width="1.3"/>
+
+  <!-- Outcomes -->
+  <rect x="815" y="55"  width="62" height="50" rx="6" ry="6" fill="#fdfaf3" stroke="#b25840" stroke-width="1.6"/>
+  <rect x="815" y="149" width="62" height="50" rx="6" ry="6" fill="#fdfaf3" stroke="#c4884a" stroke-width="1.6"/>
+  <rect x="815" y="243" width="62" height="50" rx="6" ry="6" fill="#fdfaf3" stroke="#5a7c3f" stroke-width="1.6"/>
+
+  <!-- ============== arrows ============== -->
+
+  <!-- Forward pipeline -->
+  <line x1="137" y1="176" x2="178" y2="176" stroke="#8a8279" stroke-width="1.2" marker-end="url(#ah-n)"/>
+  <line x1="322" y1="176" x2="418" y2="176" stroke="#8a8279" stroke-width="1.2" marker-end="url(#ah-n)"/>
+  <line x1="542" y1="176" x2="638" y2="176" stroke="#8a8279" stroke-width="1.2" marker-end="url(#ah-n)"/>
+
+  <!-- Policy → outcomes branches -->
+  <path d="M 760 160 C 790 160, 790 80,  815 80"  fill="none" stroke="#b25840" stroke-width="1.6" marker-end="url(#ah-r)"/>
+  <line x1="760" y1="176" x2="810" y2="176" stroke="#c4884a" stroke-width="1.6" marker-end="url(#ah-o)"/>
+  <path d="M 760 192 C 790 192, 790 268, 815 268" fill="none" stroke="#5a7c3f" stroke-width="1.6" marker-end="url(#ah-g)"/>
+
+  <!-- Outcomes → Grading return arrows (color-coded action carries through to grading) -->
+  <path d="M 877 80  C 905 80,  925 176, 948 176" fill="none" stroke="#b25840" stroke-width="1.6" marker-end="url(#ah-r)"/>
+  <line x1="877" y1="176" x2="948" y2="176" stroke="#c4884a" stroke-width="1.6" marker-end="url(#ah-o)"/>
+  <path d="M 877 268 C 905 268, 925 176, 948 176" fill="none" stroke="#5a7c3f" stroke-width="1.6" marker-end="url(#ah-g)"/>
+
+  <!-- ============== text on top ============== -->
+
+  <g class="f">
+    <!-- header -->
+    <text class="t-title" x="20" y="24">How the agent decides — one audio clip in, one of three actions out, one score back</text>
+    <text class="t-sub"   x="20" y="42">Same deterministic policy across every run; only the Whisper model changes.</text>
+
+    <!-- group labels -->
+    <text class="group-label" x="77"   y="129" text-anchor="middle">BENCHMARK</text>
+    <text class="group-label" x="168"  y="65"  text-anchor="start">AGENT UNDER TEST</text>
+    <text class="group-label" x="1007" y="129" text-anchor="middle">BENCHMARK</text>
+
+    <!-- benchmark-side box text -->
+    <text class="b-title" x="77"   y="174" text-anchor="middle">Audio fixture</text>
+    <text class="b-sub"   x="77"   y="192" text-anchor="middle">short .wav</text>
+
+    <text class="b-title" x="1007" y="174" text-anchor="middle">Grading</text>
+    <text class="b-sub"   x="1007" y="192" text-anchor="middle">vs. canonical ID</text>
+
+    <!-- agent-side pipeline box text -->
+    <text class="b-title" x="250" y="174" text-anchor="middle">Whisper ASR</text>
+    <text class="b-sub"   x="250" y="192" text-anchor="middle">faster-whisper · 4 sizes</text>
+
+    <text class="b-title" x="480" y="174" text-anchor="middle">Parse ID shape</text>
+    <text class="b-sub"   x="480" y="192" text-anchor="middle">uppercase · strip · validate</text>
+
+    <text class="b-title" x="700" y="162" text-anchor="middle">Policy gate</text>
+    <text class="b-sub"   x="700" y="180" text-anchor="middle">ESCALATE = 0.40</text>
+    <text class="b-sub"   x="700" y="196" text-anchor="middle">CONFIRM = 0.55</text>
+
+    <!-- pipe labels (data carried by each arrow) -->
+    <text class="pipe" x="158" y="168" text-anchor="middle">audio</text>
+    <text class="pipe" x="370" y="168" text-anchor="middle">text + avg_logprob</text>
+    <text class="pipe" x="590" y="168" text-anchor="middle">parsed_id or None</text>
+    <text class="pipe" x="912" y="168" text-anchor="middle">chosen action</text>
+
+    <!-- branch labels (policy → outcomes) -->
+    <text class="branch" x="766" y="114" fill="#b25840">parsed = None</text>
+    <text class="branch" x="766" y="128" fill="#b25840">or conf &lt; 0.40</text>
+    <text class="branch" x="785" y="169" text-anchor="middle" fill="#c4884a">conf &lt; 0.55</text>
+    <text class="branch" x="766" y="234" fill="#5a7c3f">conf ≥ 0.55</text>
+
+    <!-- outcome text -->
+    <text class="o-title" x="846" y="80"  text-anchor="middle" fill="#b25840">Escalate</text>
+    <text class="o-sub"   x="846" y="95"  text-anchor="middle">to human</text>
+
+    <text class="o-title" x="846" y="174" text-anchor="middle" fill="#c4884a">Ask repeat</text>
+    <text class="o-sub"   x="846" y="189" text-anchor="middle">one retry</text>
+
+    <text class="o-title" x="846" y="268" text-anchor="middle" fill="#5a7c3f">Commit</text>
+    <text class="o-sub"   x="846" y="283" text-anchor="middle">parsed_id</text>
+  </g>
+</svg>
