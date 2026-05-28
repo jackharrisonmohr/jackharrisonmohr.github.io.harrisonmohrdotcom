@@ -1,0 +1,165 @@
+---
+title: "How Does Your Voice Agent Know When It Mishears? (v3 preview)"
+description: "Preview of v3 spine-B re-organization."
+date: 2026-05-28
+draft: true
+---
+
+import Callout from "../../components/mdx/Callout.astro";
+import Figure from "../../components/mdx/Figure.astro";
+import AudioSample from "../../components/mdx/AudioSample.astro";
+import AgentFlowDemo from "../../components/mdx/AgentFlowDemo.astro";
+
+*Building a voice-agent benchmark for degraded audio scenarios.*
+
+<Callout type="info">
+**TL;DR**
+
+If your voice agent needs to capture a critical piece of info like an ID, a medication, or a street address, how does it know if it heard correctly? Real-world audio channels are often distorted, and when failure is unacceptable, you need something more robust than just asking for confirmation.
+
+The natural answer is to lean on the ASR's confidence number. The trouble is that the confidence number doesn't measure what its name suggests, and the gap between "what it measures" and "what we wanted it to measure" gets *wider* as the ASR model gets bigger.
+
+I built a targeted benchmark to test this specific critical failure mode for voice agents: reliable ID capture given degraded audio quality. When I spun up a little agent to test things out, the benchmark caught a regression I hadn't predicted, and the regression turned out to be one instance of that wider phenomenon.
+</Callout>
+
+## The question
+
+Voice agents are being deployed in increasingly high-stakes scenarios. We're still in the early phases of the rollout. Today, a critical failure often means lost revenues. But a future where we rely on voice agents for safety-critical roles means that effective evaluation becomes essential for health and safety.
+
+Imagine a medical scribe agent capturing the wrong medication name, an emergency dispatch agent capturing the wrong street address, or an air traffic control agent hearing the wrong flight number. These errors could result in harm to humans.
+
+The examples above are all instances of the critical failure mode of mishearing key information. The thing the agent is supposed to do when it can't reliably hear is *escalate to a human*. So the practical question, for anyone building one of these agents, is: how does it know?
+
+## The obvious answer, and why it isn't enough
+
+Most ASR models expose a confidence number. For Whisper, the natural one is `exp(avg_logprob)` — the geometric mean of per-token output probabilities, which falls out of the decode pass for free.[^2] You can wire it into an escalation policy with three lines: above some threshold, commit; below another, escalate; in between, ask the rep to repeat. That's what my agent does.
+
+The trouble is that `exp(avg_logprob)` doesn't quite answer the question we wanted answered. What it actually measures is how decisively the decoder committed to the tokens it picked. It does *not* measure whether those tokens are right. On in-distribution audio the two correlate cleanly enough that nobody notices. On degraded audio they come apart, and — most surprisingly — the magnitude of that decoupling appears to grow with model size.
+
+The rest of this post is about how I noticed that, what the data looks like, why I think it happens, and what to do about it. The vehicle is a small benchmark I built and an unexpected regression it caught.
+
+## The benchmark
+
+<AgentFlowDemo />
+
+The benchmark simulates the challenge of capturing essential info over degraded audio channels. I generated 100 test cases (200 audio fixtures total, two attempts per case) using the ElevenLabs TTS API. Each fixture is a short spoken identifier, e.g. *"S as in sierra, X-ray, one, one, eight, five"* (so the canonical ground truth here would be: `SX1185`). The cases span five buckets of increasingly degraded audio. Fixtures in the 'severe' bucket are designed to be unrecoverable.
+
+| Bucket | n | Distortion |
+| --- | --- | --- |
+| clean | 15 | none |
+| light | 15 | mild noise OR phone bandpass alone |
+| moderate | 20 | phone bandpass + 10 dB SNR noise |
+| heavy | 25 | phone bandpass + 5 dB SNR + light dropout |
+| severe | 25 | phone bandpass + −12 dB SNR + 250 ms dropout @ 55% per-window |
+
+The deterministic degradation pipeline simulates the sort of distortion artifacts that you hear on a phone call (you might say it's a bit phone-y[^1]): a 300–3400 Hz bandpass (the standard phone band), a μ-law codec roundtrip (the standard phone codec), additive white noise at a configurable SNR, and packet dropout where 250 ms windows are silenced at a configurable probability. The severe bucket layers all four and pushes things beyond human-level recoverability. Also, the catalog is seeded, so rerunning the generator produces byte-identical fixtures.
+
+For each case, the agent being tested receives the audio file and chooses one of three actions: commit a transcription, ask the rep to repeat (one retry allowed), or escalate to a human. To recap, on the cases where the audio is actually unintelligible, the right behavior is to escalate. If your agent is recording something like a medication, an emergency address, or a patient identifier, you want it to fail loudly. The benchmark then grades the agent on % accuracy as well as escalation precision/recall (i.e. to what extent did it escalate on impossible cases but not on tractable cases?).
+
+To exercise the benchmark I built a simple deterministic agent that wraps a Whisper ASR model.[^4] The agent transcribes the audio, parses the transcript to an ID (uppercase, strip non-alphanumeric characters, validate against a basic format), and decides whether to escalate based on Whisper's confidence. My agent's austere escalation policy looks like this:
+
+```python
+# voice_agent_eval/whisper_agent.py — the policy gate
+
+def decide(asr_text: str, confidence: float) -> Action:
+    parsed = parse_id_shape(asr_text)   # uppercase, strip, normalize
+
+    if parsed is None or confidence < ESCALATE_BELOW:
+        return Escalate()
+    if confidence < CONFIRM_BELOW:
+        return AskForRepeat()
+    return Commit(parsed)
+```
+
+What we're doing here is taking a surgical approach to checking a single domain-specific high-stakes failure mode. By discarding extraneous details we're able to better isolate what we're interested in. Some of the complexities this setup removes:
+
+- Both the benchmark's interlocutor and the agent I built to exercise the benchmark forego an actual LLM for the 'brain' of the agent. They're fully deterministic. Only the ASR model introduces uncertainty.
+- We also forego any sequence of realistic conversational turns preceding the ID transcription challenge.
+- The benchmark provides the agent very limited options: submit a transcript capture, escalate to a human, or ask to repeat the audio file.
+- Importantly, the setup completely ignores many of the essential challenges of the voice agent domain: turn-taking, barge-ins, end-pointing, latency, etc. In fact, the benchmark is *not* even real-time. It's turn-based, with an optional HTTP-based FastAPI server. These real-time issues are not germane to the question our benchmark is asking.
+
+It's also worth pointing out that the purpose of this benchmark is not to assess frontier capabilities, but rather to catch regressions. The current generation of agents can easily perform well on it already.
+
+## What happened when I upgraded the model
+
+I ran my agent on the benchmark with four different Whisper ASR model sizes. When I initially swapped them in without tuning the escalation policy threshold, accuracy increased monotonically while wrong-commit rates on the ~impossible 'severe' bucket tasks rose from 0% in tiny.en up to 64% in large-v3 😬.
+
+<Figure
+  src="/images/asr-calibration/fig_01_headline_trend.svg"
+  alt="Three rates across four Whisper sizes. Capture rate climbs from 64 to 89 percent. Aggregate wrong-commit rate climbs slightly from 19 to 24 percent. Severe-bucket wrong-commit rate explodes from 0 to 64 percent."
+  caption="Bigger Whisper: more capture, and much more wrong commits on hard audio. Default thresholds throughout (CONFIRM_BELOW=0.55). Three rates, four model sizes, identical audio and policy. Capture (green) climbs cleanly. Aggregate wrong-commit rate (amber) barely moves — easy to mistake for noise. Severe-bucket wrong-commit rate (red) is the same story without the dilution: 0% at tiny.en, 64% at large-v3."
+/>
+
+This is the kind of regression that's easy to miss. Let's walk through the layers of how you might miss it in practice:
+
+1. **Having an agent that has no way of knowing how confident it is in its transcription** (from my personal conversations, this seems to remain common as of this writing). In this case it's a moot point and you'll find out from your customers.
+2. **Not specifically evaluating the failure mode you're interested in.** If it would be really bad for your voice agent to fail in production by mishearing certain info and not escalating, then your eval suite should test for that. It would be easy to gloss over in a broad end-to-end evaluation.
+3. **Only looking at ID capture accuracy.** "Look! Accuracy increases with a bigger model." Ignoring the escalation behavior would miss the bug.
+4. **Not including adversarial examples in the benchmark** (assuming that sort of thing might show up in your production environment).
+5. **Only looking at the aggregate wrong-commit rate.** Check out the amber line in the chart above. Overall the escalation behavior doesn't look so bad. But when you look specifically at the impossible cases, it's clear that the large model has *totally lost the plot*.
+6. **Calibrating the model's escalation policy to this benchmark.** The distribution of severe audio samples is arbitrary and has no relation to any actual production situation. Below I do an F1 sweep to find the 'optimal' for each model. But the calibration settings only work for this distribution of fixtures.
+
+## The band-aid: recalibrate per model
+
+Once I caught the bug I found new thresholds for each model by doing a threshold sweep and finding the optimal F1 score for each model (since presumably we want a good balance of recall and precision). Remember that what we mean here by a true positive is a genuinely impossible case, a true negative is a genuinely tractable case, a false positive is a tractable case you thought was impossible, and a false negative is an impossible case you thought was tractable. That produced the following nice-looking chart (remember that you'd want to grab data from your actual domain to see how frequently adversarial cases occur in practice):
+
+<Figure
+  src="/images/asr-calibration/fig_06_threshold_sweep.svg"
+  alt="F1 versus threshold curves for the four Whisper sizes overlaid on one plot. Each curve peaks at a different threshold."
+  caption="Each curve is one model. Each peaks at a different threshold. The dashed line is the default 0.55 — in roughly the right neighborhood for tiny / small / medium, but well to the left of large-v3's peak."
+/>
+
+Post-calibration, better models indeed performed better on both capture accuracy and escalation policy as you'd hope and expect. Check out that Pareto frontier!
+
+<Figure
+  src="/images/asr-calibration/fig_02_pareto.svg"
+  alt="Pareto plot: capture rate versus wrong-commit rate. Each base model is a circle, each recalibrated variant is a star. Every arrow from base to recal points up and to the right."
+  caption="Each base model (circle) and its recalibrated variant (star). Every arrow points up and to the right. Recalibration is a strict Pareto improvement at every model size — more captures *and* fewer wrong commits."
+/>
+
+| Run | Threshold | Capture | Wrong commit | Escalation F1 |
+| --- | --- | ---: | ---: | ---: |
+| tiny.en | 0.55 | 64% | 19% | 0.84 |
+| small.en | 0.55 | 73% | 23% | 0.86 |
+| **small recal** | **0.65** | **80%** | **11%** | **0.93** |
+| medium.en | 0.55 | 80% | 21% | 0.79 |
+| **medium recal** | **0.65** | **84%** | **10%** | **0.93** |
+| large-v3 | 0.55 | 89% | 24% | **0.47** ← collapse |
+| **large recal** | **0.75** | **92%** | **6%** | **0.93** |
+
+## So what's actually going on with that threshold drift?
+
+The threshold recalibration fix worked but it was a bit of a hack. `exp(avg_logprob)` is an unreliable proxy for the model's confidence in the correctness of its output. We fixed our agent by adjusting its escalation behavior to work with that unreliable proxy signal. The real fix would be to fix the signal. Recall that `exp(avg_logprob)` is the geometric mean of per-token softmax probabilities over the decoded output.[^2] What that *actually* corresponds to is 'how decisively did the decoder commit to these specific tokens on average'. It's a measure not of how right those tokens are, but rather, just of the overall certainty with which they were picked.
+
+Looking at some examples from the benchmark, we can gain an intuition for how this distinction matters and how in certain cases, `exp(avg_logprob)` can diverge quite severely from a good proxy for output correctness. Whisper can be simultaneously certain about a sequence of tokens *and* wrong.
+
+<Callout type="warning">
+**TODO:** finish analysis here and reference specific examples with our audio widget. Need to make sure our mechanism story makes sense and we don't overclaim.
+</Callout>
+
+## What would be a better way than threshold recalibration?
+
+<Callout type="warning">
+**TODO:** Briefly cover the different approaches that beat out raw threshold adjustment: temperature scaling, isotonic regression, multi-feature learned calibrator, plus cost-aware utility function on top.
+</Callout>
+
+## Reflections
+
+> "If you don't know where you are going, you might wind up someplace else."
+> — Yogi Berra
+
+Whether in life or in evals, it pays to be clear on what you want.
+
+When I built the benchmark, I didn't predict the model-swap miscalibration bug. Indeed if I were building a real agent, the added complexity would surely create opportunities for numerous other bugs. The lesson here is certainly *not* "remember to calibrate parameters when you swap models", nor is it even, "design systems that calibrate themselves so you can set it and forget it". The lesson is that we often can't predict the problems that will arise. We should therefore get specific about what we care about, and how we'll know whether our agent is sufficiently aligned in the dimensions we care about (ideally) before we release it into the wild.[^3]
+
+By being clear on the product-level implications of different failure modes, we can specify what it means for our agent to be shippable. In the case of my benchmark, one presumably really cares not just about transcription accuracy but also about generally preventing wrong transcription. It's good to be clear about that from the start so whatever unexpected bugs arise will be surfaced by your evals in the dimensions you care about.
+
+---
+
+[^1]: Indeed the distortion is both phone-y and phony. The audio pipeline mimics artifacts that sound kind of like that which you'd hear on a phone call, but it's artificial and doesn't quite match what you'd really get (e.g. codec hops, background conversations, side speech, bad pronunciation). We *assume* that our phony distortion pipeline is a decent proxy for the phone-y distortion you'd get in the wild.
+
+[^2]: Strictly: `exp((1/N) · Σ log p(token_i))` — the exponentiated arithmetic mean of log-probabilities, which equals the geometric mean of the raw probabilities. Whisper exposes this directly as `avg_logprob` in its segment output; `exp()` puts it back on the [0, 1] scale.
+
+[^3]: This of course is a very small, practical, and near-term version of the far grander and more serious AI alignment problem. It is, however, categorically different, in that long-horizon alignment of super-intelligent AI raises some pretty deep and open questions for science and philosophy, while what we're talking about here is much more of a tractable and grounded matter: specifying what you want from the country of geniuses in the datacenter is way harder than specifying what you want from your call center customer support agent.
+
+[^4]: A lot of voice agents these days still have the modular ASR → LLM → TTS architecture. Indeed fully multi-modal models exist and it seems like the sort of thing that will likely replace the old architecture. I'm curious about how the model confidence question is handled in the multimodal architecture. At any rate, the benchmark itself doesn't need to know *how* an agent is deciding whether to escalate. It just feeds audio samples and grades the agent on its performance. It's the agent's job to decide whether it's confident in what it heard, regardless of whether it uses an ASR plus LLM setup.
