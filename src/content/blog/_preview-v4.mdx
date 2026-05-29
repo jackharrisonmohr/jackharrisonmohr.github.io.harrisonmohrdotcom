@@ -1,6 +1,6 @@
 ---
-title: "How Does Your Voice Agent Know When It Mishears? (v3 preview)"
-description: "Preview of v3 spine-B re-organization."
+title: "How Does Your Voice Agent Know When It Mishears? (v4 preview)"
+description: "A targeted benchmark for degraded-audio ID capture, and the ASR calibration regression it caught."
 date: 2026-05-28
 draft: true
 ---
@@ -17,9 +17,9 @@ import AgentFlowDemo from "../../components/mdx/AgentFlowDemo.astro";
 
 If your voice agent needs to capture a critical piece of info like an ID, a medication, or a street address, how does it know if it heard correctly? Real-world audio channels are often distorted, and when failure is unacceptable, you need something more robust than just asking for confirmation.
 
-The natural answer is to lean on the ASR's confidence number. The trouble is that the confidence number doesn't measure what its name suggests, and the gap between "what it measures" and "what we wanted it to measure" gets *wider* as the ASR model gets bigger.
+The natural answer is to lean on the ASR's confidence number. The trouble is that this number is task-blind. It can tell you how confidently the ASR decoded a transcript, but not whether the transcript is the right answer to the question your agent asked.
 
-I built a targeted benchmark to test this specific critical failure mode for voice agents: reliable ID capture given degraded audio quality. When I spun up a little agent to test things out, the benchmark caught a regression I hadn't predicted, and the regression turned out to be one instance of that wider phenomenon.
+I built a targeted benchmark to test this specific critical failure mode for voice agents: reliable ID capture given degraded audio quality. When I swapped in stronger Whisper models, capture accuracy improved — but on deliberately-unrecoverable audio, wrong commits rose sharply unless I recalibrated the downstream policy.
 </Callout>
 
 ## The question
@@ -32,11 +32,15 @@ The examples above are all instances of the critical failure mode of mishearing 
 
 ## The obvious answer, and why it isn't enough
 
-Most ASR models expose a confidence number. For Whisper, the natural one is `exp(avg_logprob)` — the geometric mean of per-token output probabilities, which falls out of the decode pass for free.[^2] You can wire it into an escalation policy with three lines: above some threshold, commit; below another, escalate; in between, ask the rep to repeat. That's what my agent does.
+Most ASR models expose a confidence number. For Whisper, the natural one is `exp(avg_logprob)` — the geometric mean of the per-token probabilities assigned to the transcript Whisper decoded.[^2] You can wire that into an escalation policy with three lines: above some threshold, commit; below another, escalate; in between, ask the rep to repeat. That's what my agent does.
 
-The trouble is that `exp(avg_logprob)` doesn't quite answer the question we wanted answered. What it actually measures is how decisively the decoder committed to the tokens it picked. It does *not* measure whether those tokens are right. On in-distribution audio the two correlate cleanly enough that nobody notices. On degraded audio they come apart, and — most surprisingly — the magnitude of that decoupling appears to grow with model size.
+The catch is that this number is task-blind. It measures how confidently Whisper produced its chosen transcript, not whether that transcript is the right answer to the question the agent asked. It doesn't know the agent is trying to capture an ID. It doesn't know what ID format is expected. It doesn't know what a downstream parser will extract from the transcript.
 
-The rest of this post is about how I noticed that, what the data looks like, why I think it happens, and what to do about it. The vehicle is a small benchmark I built and an unexpected regression it caught.
+That distinction matters most on degraded audio. A transcript can be fluent, repetitive, or internally self-consistent enough to receive a decent token-level score, while still being completely wrong for the task. If the parser can turn that transcript into some identifier-shaped string, and the confidence clears the commit threshold, the agent ships a wrong ID.
+
+The surprising part in my benchmark was that this failure got worse as I upgraded Whisper. Larger models captured more recoverable IDs, as expected. But on the deliberately-unrecoverable audio, they also produced more wrong transcripts that crossed the parser + confidence gates. The result was a model upgrade that looked better on capture rate while becoming less safe on the cases where the right answer was "I can't hear this."
+
+The rest of this post is about how I found that regression, what the data looks like, and what production systems should do besides trusting a raw ASR confidence threshold.
 
 ## The benchmark
 
@@ -56,7 +60,7 @@ The deterministic degradation pipeline simulates the sort of distortion artifact
 
 For each case, the agent being tested receives the audio file and chooses one of three actions: commit a transcription, ask the rep to repeat (one retry allowed), or escalate to a human. To recap, on the cases where the audio is actually unintelligible, the right behavior is to escalate. If your agent is recording something like a medication, an emergency address, or a patient identifier, you want it to fail loudly. The benchmark then grades the agent on % accuracy as well as escalation precision/recall (i.e. to what extent did it escalate on impossible cases but not on tractable cases?).
 
-To exercise the benchmark I built a simple deterministic agent that wraps a Whisper ASR model.[^4] The agent transcribes the audio, parses the transcript to an ID (uppercase, strip non-alphanumeric characters, validate against a basic format), and decides whether to escalate based on Whisper's confidence. My agent's austere escalation policy looks like this:
+To exercise the benchmark I built a simple deterministic agent that wraps a Whisper ASR model.[^4] The agent transcribes the audio, runs a deliberately simple parser over the transcript, and decides whether to escalate based on Whisper's confidence. My agent's austere escalation policy looks like this:
 
 ```python
 # voice_agent_eval/whisper_agent.py — the policy gate
@@ -71,7 +75,9 @@ def decide(asr_text: str, confidence: float) -> Action:
     return Commit(parsed)
 ```
 
-What we're doing here is taking a surgical approach to checking a single domain-specific high-stakes failure mode. By discarding extraneous details we're able to better isolate what we're interested in. Some of the complexities this setup removes:
+What we're doing here is taking a surgical approach to checking a single domain-specific high-stakes failure mode. By discarding extraneous details we're able to better isolate what we're interested in. The toy part is the implementation; the production pattern is real. Every voice agent that captures high-impact fields needs some policy for when the audio evidence is strong enough to commit and when it should ask again or escalate.
+
+Some of the complexities this setup removes:
 
 - Both the benchmark's interlocutor and the agent I built to exercise the benchmark forego an actual LLM for the 'brain' of the agent. They're fully deterministic. Only the ASR model introduces uncertainty.
 - We also forego any sequence of realistic conversational turns preceding the ID transcription challenge.
@@ -129,19 +135,133 @@ Post-calibration, better models indeed performed better on both capture accuracy
 
 ## So what's actually going on with that threshold drift?
 
-The threshold recalibration fix worked but it was a bit of a hack. `exp(avg_logprob)` is an unreliable proxy for the model's confidence in the correctness of its output. We fixed our agent by adjusting its escalation behavior to work with that unreliable proxy signal. The real fix would be to fix the signal. Recall that `exp(avg_logprob)` is the geometric mean of per-token softmax probabilities over the decoded output.[^2] What that *actually* corresponds to is 'how decisively did the decoder commit to these specific tokens on average'. It's a measure not of how right those tokens are, but rather, just of the overall certainty with which they were picked.
+The tempting story is: "bigger Whisper hallucinated more confidently." That's too simple. Hallucinated transcripts can be low-confidence, and some failures in this benchmark are not ASR failures at all. The mechanism is a stack interaction:
 
-Looking at some examples from the benchmark, we can gain an intuition for how this distinction matters and how in certain cases, `exp(avg_logprob)` can diverge quite severely from a good proxy for output correctness. Whisper can be simultaneously certain about a sequence of tokens *and* wrong.
+```text
+audio -> ASR transcript + exp(avg_logprob)
+      -> parser extracts candidate ID
+      -> policy commits / confirms / repeats / escalates
+```
 
-<Callout type="warning">
-**TODO:** finish analysis here and reference specific examples with our audio widget. Need to make sure our mechanism story makes sense and we don't overclaim.
-</Callout>
+`exp(avg_logprob)` only scores the first line. It measures the decoder's confidence in the tokens it chose. It does not know whether those tokens are a plausible ID, whether the parser will extract a value from them, or whether a wrong value is more expensive than an extra escalation.
+
+On the severe bucket, the dangerous region grew with model size. These are the 25 cases designed to be unrecoverable; no model captured the canonical ID on any of them. The right behavior is to escalate.
+
+| Severe bucket | tiny.en | small.en | medium.en | large-v3 |
+| --- | ---: | ---: | ---: | ---: |
+| Parser produced candidate on first turn | 7/25 | 18/25 | 17/25 | 22/25 |
+| First-turn confidence ≥ 0.55 | 0/25 | 2/25 | 4/25 | 12/25 |
+| Final wrong commit | 0/25 | 4/25 | 6/25 | 16/25 |
+
+That table is the mechanism in miniature. The larger models do not merely become more accurate on the recoverable audio. They also move more unrecoverable audio into the "candidate exists + confidence clears threshold" region, where this toy agent commits instead of escalating.
+
+### Not every hallucination is dangerous
+
+A hallucinated sentence is not, by itself, the bug. For example, in `sev_096`, small.en heard:
+
+```text
+He was very popular, he had a good heart, he was one of six.
+```
+
+The confidence was only 0.39, so the agent escalated. This is the system working as designed. The transcript is nonsense for the task, but it never crosses the confidence gate.
+
+### The dangerous cases cross both gates
+
+`sev_098` is a cleaner example of the failure. The canonical ID is `117PS896`, but the audio is too degraded to recover. tiny.en fails loudly; the larger models produce digit-like transcripts that clear the commit threshold.
+
+<AudioSample
+  src="/audio/asr-calibration/sev_098_attempt1.wav"
+  canonical="117PS896"
+  bucket="severe"
+  caption="Same severe audio, same policy. The larger models produce wrong candidates above the commit threshold."
+  results={[
+    {
+      model: "tiny.en",
+      output: null,
+      raw: "blank transcript",
+      confidence: 0.00,
+      outcome: "escalate",
+    },
+    {
+      model: "small.en",
+      output: "1173STANDS9",
+      raw: "One, one, seven, three, as it happens, as it stands, nine.",
+      confidence: 0.56,
+      outcome: "wrong",
+    },
+    {
+      model: "medium.en",
+      output: "11787879",
+      raw: "One, one, seven, eight, seven, eight, seven, nine.",
+      confidence: 0.59,
+      outcome: "wrong",
+    },
+    {
+      model: "large-v3",
+      output: "1176789",
+      raw: "1, 1, 7, 6, 7, 8, 9,",
+      confidence: 0.77,
+      outcome: "wrong",
+    },
+  ]}
+/>
+
+Notice the precise failure condition. It is not "ASR hallucinated." It is:
+
+```text
+bad audio
++ ASR hallucination
++ parser extracts a candidate
++ exp(avg_logprob) clears the commit threshold
++ no semantic or schema validator blocks it
+= wrong commit
+```
+
+This also explains why recalibration helps. It moves more borderline transcripts into the confirmation path. In `sev_092`, large-v3 eventually hears `3-8-8-0-7-4-1-6` at confidence 0.70 and commits `38807416` under the default threshold. With the recalibrated threshold, the agent confirms first, gets "No, that does not match," and escalates.
+
+### Some failures are validation failures
+
+Other examples show why threshold recalibration is not the whole answer. In `sev_076`, large-v3 hears:
+
+```text
+K-L-A-N-E-S-T-G-O-M-E-S-T-R-E-E-S-T-R-E-E-S-T-R-E-E-S-T-R-E-E-S-T-R-E-E-S
+```
+
+The confidence is 0.62, which is high enough to clear the default commit threshold. But the parsed value `KLANESTGOMESTREESTREESTREESTREESTREES` is not a plausible member ID. A production system should reject it with a schema or length check before confidence thresholding even matters.
+
+`sev_099` is similar. The canonical claim ID is `CL9235-57560`, but large-v3 hears:
+
+```text
+Human heart, all over me, 1, 2, 3, 4, 5, 6, 5, 6, 0.
+```
+
+The parser extracts `ME123456560` and the confidence is 0.63. A task-aware system cannot recover the real claim ID from that transcript, but it can recognize that the transcript is not good evidence for a claim ID and escalate.
+
+### Some failures are extraction failures
+
+There is also the opposite case: the transcript contains recoverable information, but my toy parser mishandles it. In `cle_005`, every model hears some variant of:
+
+```text
+U.S. in Uniform 59222.
+```
+
+The canonical ID is `U59222`, but the parser outputs `USU59222`. A task-aware extractor — even a small LLM with the instruction "extract the ID the rep is spelling" — could reasonably infer that "U.S. in Uniform" is an ASR rendering of "U as in Uniform." That case is not an ASR calibration failure. It is an extraction failure.
+
+This is why I do not want to oversell the empirical labels as pure audio truth. The cleanest production-harm metric here is label-free: did the agent commit a value that differed from the canonical? The mechanism section is about the failures where bad audio, task-blind confidence, permissive parsing, and a commit policy line up in the wrong direction.
 
 ## What would be a better way than threshold recalibration?
 
-<Callout type="warning">
-**TODO:** Briefly cover the different approaches that beat out raw threshold adjustment: temperature scaling, isotonic regression, multi-feature learned calibrator, plus cost-aware utility function on top.
-</Callout>
+Threshold recalibration is the first fix, not the final design. It works in this benchmark because it changes the policy boundary: more questionable transcripts get confirmed instead of immediately committed. That's useful, but it is still using a task-blind signal as if it were a task-aware one.
+
+A production agent should combine several signals:
+
+1. **Per-model calibration.** If the ASR model changes, recompute the confidence thresholds against a held-out set that includes cases where the right answer is escalation. Temperature scaling or isotonic regression can turn a raw score into a better-calibrated probability, but the calibration has to be against the task outcome you care about.
+2. **Task-aware extraction.** The transcript is not the final answer. An extraction layer should use the fact that the agent asked for a member ID, claim ID, medication, address, or dollar amount. This can be a stricter deterministic parser, a grammar, or an LLM constrained to return `{value, uncertainty, reason}`.
+3. **Schema and plausibility validation.** If the expected member ID is short and alphanumeric, `KLANESTGOMESTREESTREESTREESTREESTREES` should not reach the commit stage. If the transcript sounds like a random sentence, the system should treat that as evidence of uncertainty, not as a candidate answer.
+4. **Cross-attempt agreement.** When two attempts produce different candidate IDs, that disagreement is itself a signal. A production system should be more willing to escalate when the evidence changes across repeats.
+5. **Cost-aware policy.** The optimal decision is not just "maximize F1." A wrong committed ID can cause downstream harm, while an extra human review is an operational cost. The threshold should reflect that asymmetry.
+
+The broader point is that a voice agent should not ask, "Was the ASR confident?" It should ask, "Given the audio, transcript, task context, parser output, and downstream cost, is there enough evidence to commit this field?" The benchmark is useful because it makes that question measurable.
 
 ## Reflections
 
@@ -156,7 +276,7 @@ When I built the benchmark, I didn't predict the model-swap miscalibration bug. 
 By being clear on the product-level implications of different failure modes, we can specify what it means for our agent to be shippable. In the case of my benchmark, one presumably really cares not just about transcription accuracy but also about generally preventing wrong transcription. It's good to be clear about that from the start so whatever unexpected bugs arise will be surfaced by your evals in the dimensions you care about.
 
 
-Second, as per the oft-quoted George Box, 'all models are wrong but some are useful'. By understanding how our proxy metrix diverged from reality, we can get a better sense of what's going on.
+Second, as per the oft-quoted George Box, "all models are wrong but some are useful." By understanding how our proxy metric diverges from reality, we can get a better sense of where the system needs another layer of evidence.
 
 ---
 
@@ -166,4 +286,4 @@ Second, as per the oft-quoted George Box, 'all models are wrong but some are use
 
 [^3]: This of course is a very small, practical, and near-term version of the far grander and more serious AI alignment problem. It is, however, categorically different, in that long-horizon alignment of super-intelligent AI raises some pretty deep and open questions for science and philosophy, while what we're talking about here is much more of a tractable and grounded matter: specifying what you want from the country of geniuses in the datacenter is way harder than specifying what you want from your call center customer support agent.
 
-[^4]: A lot of voice agents these days still have the modular ASR → LLM → TTS architecture. Indeed fully multi-modal models exist and it seems like the sort of thing that will likely replace the old architecture. I'm curious about how the model confidence question is handled in the multimodal architecture. At any rate, the benchmark itself doesn't need to know *how* an agent is deciding whether to escalate. It just feeds audio samples and grades the agent on its performance. It's the agent's job to decide whether it's confident in what it heard, regardless of whether it uses an ASR plus LLM setup.
+[^4]: A lot of voice agents these days still use the modular ASR → LLM → TTS architecture, though fully multimodal realtime models may replace parts of that stack. The benchmark itself does not need to know *how* an agent decides whether to escalate. It feeds audio samples and grades the agent on its behavior. A multimodal model might condition on more conversational context than this toy setup, but its downstream policy still needs some way to decide whether the evidence is strong enough to commit a high-impact field.
