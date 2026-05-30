@@ -1,9 +1,10 @@
 ---
 interface Props {
   type?: "info" | "warning" | "tip";
+  label?: string;
 }
 
-const { type = "info" } = Astro.props;
+const { type = "info", label } = Astro.props;
 
 const styles = {
   info: "border-text/15 bg-text/[0.03]",
@@ -16,13 +17,15 @@ const labels = {
   warning: "Warning",
   tip: "Tip",
 };
+
+const heading = label ?? labels[type];
 ---
 
-<aside class:list={["rounded-lg border-l-4 px-5 py-4 my-6 not-prose", styles[type]]}>
-  <p class="text-xs font-medium uppercase tracking-widest mb-2 text-muted-light">
-    {labels[type]}
+<aside class:list={["rounded-lg border-l-4 px-6 py-5 my-8 not-prose", styles[type]]}>
+  <p class="text-xs font-semibold uppercase tracking-widest mb-3 text-muted-light">
+    {heading}
   </p>
-  <div class="text-sm leading-relaxed text-text/80">
+  <div class="callout-body text-[1.0625rem] leading-relaxed text-text/90">
     <slot />
   </div>
 </aside>
@@ -35,5 +38,12 @@ const labels = {
   .callout-tip {
     border-color: var(--color-callout-tip-border);
     background-color: var(--color-callout-tip-bg);
+  }
+  /* not-prose strips paragraph margins; restore comfortable spacing between them */
+  .callout-body :global(p + p) {
+    margin-top: 0.85em;
+  }
+  .callout-body :global(strong) {
+    font-weight: 600;
   }
 </style>
