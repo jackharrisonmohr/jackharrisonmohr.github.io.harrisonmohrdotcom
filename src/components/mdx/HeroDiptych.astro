@@ -1,0 +1,216 @@
+---
+// Interactive hero: whisper-large-v3 confidence diptych. Clean vs severe decodes,
+// every square a token shaded by per-token confidence, every row one transcription.
+// Hover a row to read that decode (spoken ID vs. what the model heard) in the
+// readout below. Data baked in from scripts/generate_hero_data.py.
+import data from "./hero_diptych_data.json";
+
+const clean = data.clean as Decode[];
+const severe = data.severe as Decode[];
+type Decode = { cid: string; t: string; c: number; e: number; canon: string; s: string; r: string; p: number[] };
+
+const S = 11, GAP = 2.4, RG = 3, COLGAP = 60, TOP = 40, ML = 14;
+const PITCH = S + GAP, ROWH = S + RG;
+const STOPS: [number, number[]][] = [
+  [0, [246, 236, 214]], [0.25, [233, 193, 120]], [0.5, [217, 142, 59]],
+  [0.75, [181, 86, 46]], [1, [110, 47, 42]],
+];
+function confHex(p: number) {
+  p = Math.max(0, Math.min(1, p));
+  for (let i = 0; i < STOPS.length - 1; i++) {
+    const [x0, c0] = STOPS[i], [x1, c1] = STOPS[i + 1];
+    if (p <= x1) {
+      const t = x1 > x0 ? (p - x0) / (x1 - x0) : 0;
+      const m = (a: number, b: number) => Math.round(a + (b - a) * t).toString(16).padStart(2, "0");
+      return `#${m(c0[0], c1[0])}${m(c0[1], c1[1])}${m(c0[2], c1[2])}`;
+    }
+  }
+  return "#6e2f2a";
+}
+
+const cleanW = Math.max(...clean.map((d) => d.p.length)) * PITCH;
+const severeW = Math.max(...severe.map((d) => d.p.length)) * PITCH;
+const xClean = ML, xSevere = ML + cleanW + COLGAP;
+const W = xSevere + severeW + ML;
+const blockH = Math.max(clean.length, severe.length) * ROWH;
+const H = TOP + blockH + 8;
+
+function rowGroup(d: Decode, x0: number, y: number, gi: number) {
+  let s = "";
+  for (let j = 0; j < d.p.length; j++) {
+    s += `<rect x="${(x0 + j * PITCH).toFixed(1)}" y="${y.toFixed(1)}" width="${S}" height="${S}" rx="2.4" fill="${confHex(d.p[j])}"/>`;
+  }
+  const w = d.p.length * PITCH;
+  s += `<rect class="hd-hit" x="${x0}" y="${(y - RG / 2).toFixed(1)}" width="${w.toFixed(1)}" height="${ROWH}" fill="transparent"/>`;
+  return `<g class="hd-row" data-i="${gi}">${s}</g>`;
+}
+let rowsHtml = "";
+clean.forEach((d, i) => (rowsHtml += rowGroup(d, xClean, TOP + i * ROWH, i)));
+severe.forEach((d, i) => (rowsHtml += rowGroup(d, xSevere, TOP + i * ROWH, clean.length + i)));
+
+const POINTS = [...clean, ...severe].map(({ p, ...rest }) => rest);
+const gradId = "hd-grad";
+---
+
+<figure class="hd my-8 not-prose">
+  <div class="hd-wrap">
+    <svg viewBox={`0 0 ${W} ${H}`} class="hd-svg" role="img"
+         aria-label="whisper-large-v3 confidence diptych: clean decodes on the left, severe on the right, each square a token shaded by the model's confidence. Hover a row to read its transcript.">
+      <rect x="0" y="0" width={W} height={H} rx="10" fill="#fdfaf3" />
+      <text x={xClean} y={TOP - 12} class="hd-lab">clean audio <tspan class="hd-sub">it hears the ID</tspan></text>
+      <text x={xSevere} y={TOP - 12} class="hd-lab">severe audio <tspan class="hd-sub">it makes one up</tspan></text>
+      <g class="hd-rows" set:html={rowsHtml} />
+    </svg>
+    <div class="hd-nowplaying" hidden>
+      <span class="hd-np-ic">▶</span><span class="hd-np-txt"></span>
+      <button class="hd-np-stop" type="button" aria-label="Stop audio">■</button>
+    </div>
+  </div>
+
+  <div class="hd-readout"><span class="hd-hint">Hover a row to read what the model heard →</span></div>
+
+  <div class="hd-foot">
+    <span class="hd-legbar">
+      <svg width="120" height="11" aria-hidden="true">
+        <defs><linearGradient id={gradId} x1="0" x2="1">
+          {STOPS.map(([x]) => <stop offset={`${x}`} stop-color={confHex(x)} />)}
+        </linearGradient></defs>
+        <rect width="120" height="11" rx="3" fill={`url(#${gradId})`} />
+      </svg>
+      <span class="hd-legtxt">less sure → more confident</span>
+    </span>
+    <span class="hd-key">each square = one decoded token · each row = one transcription · whisper-large-v3</span>
+  </div>
+
+  <figcaption class="hd-cap">
+    On clean audio (left) the model spells out the right ID — tight, short, sure. On severe audio (right)
+    it invents something longer and wronger, yet much of it glows just as warm.
+    <strong>Confidence about the words, not about the world.</strong> Hover any row to read it.
+  </figcaption>
+</figure>
+
+<script define:vars={{ POINTS }}>
+  const TIER_COLOR = { clean: "#4C9F70", light: "#7FB069", moderate: "#E6A02C", severe: "#D9534F", heavy: "#7A3B69" };
+  // playback volume per tier — severe/heavy are mostly white noise, attenuate them
+  const TIER_VOLUME = { clean: 1.0, light: 0.9, moderate: 0.8, heavy: 0.5, severe: 0.32 };
+  const AUDIO_BASE = "/audio/asr-calibration/";
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const errColor = (e) => (e <= 0.1 ? "#3f8f5e" : e <= 1.0 ? "#c4884a" : "#cc4b3f");
+
+  function roHtml(p) {
+    const tc = TIER_COLOR[p.t] || "#8a8279";
+    const ec = errColor(p.e);
+    return (
+      `<div class="hd-ro">` +
+        `<div class="hd-ro-meta">` +
+          `<span class="hd-chip" style="background:${tc}">${p.t}</span>` +
+          `<span class="hd-stat">confidence <b>${p.c.toFixed(2)}</b></span>` +
+          `<span class="hd-stat">CER <b style="color:${ec}">${p.e.toFixed(2)}</b></span>` +
+          `<span class="hd-play">▶ click to play</span>` +
+          `<span class="hd-cid">${p.cid} · target ${esc(p.canon)}</span>` +
+        `</div>` +
+        `<div class="hd-fld"><span>spoken</span><div>${esc(p.s)}</div></div>` +
+        `<div class="hd-fld"><span>heard</span><div style="color:${ec}">${esc(p.r)}</div></div>` +
+      `</div>`
+    );
+  }
+
+  document.querySelectorAll(".hd").forEach((root) => {
+    const wrap = root.querySelector(".hd-wrap");
+    const rows = root.querySelector(".hd-rows");
+    const ro = root.querySelector(".hd-readout");
+    if (!wrap || !rows || !ro) return;
+    const idle = ro.innerHTML;
+    let hot = null;
+
+    // click a row to hear its clip (one per case, attenuated per tier)
+    const np = root.querySelector(".hd-nowplaying");
+    const npTxt = root.querySelector(".hd-np-txt");
+    const npStop = root.querySelector(".hd-np-stop");
+    let audio = null;
+    function stopAudio() {
+      if (audio) { audio.pause(); audio.src = ""; audio = null; }
+      if (np) np.hidden = true;
+    }
+    function play(p) {
+      stopAudio();
+      const vol = TIER_VOLUME[p.t] ?? 1;
+      audio = new Audio(AUDIO_BASE + p.cid + "_attempt1.mp3");
+      audio.volume = vol;
+      audio.play().catch(() => {});
+      audio.addEventListener("ended", stopAudio);
+      if (npTxt) npTxt.textContent = `${p.cid} · ${p.t} · vol ${Math.round(vol * 100)}%`;
+      if (np) np.hidden = false;
+    }
+    if (npStop) npStop.addEventListener("click", (e) => { e.stopPropagation(); stopAudio(); });
+
+    function setHot(g) {
+      if (hot === g) return;
+      if (hot) hot.classList.remove("is-hot");
+      hot = g;
+      if (g) { g.classList.add("is-hot"); rows.classList.add("dim"); }
+      else rows.classList.remove("dim");
+    }
+    function update(ev) {
+      const g = ev.target.closest && ev.target.closest(".hd-row");
+      if (g) { ro.innerHTML = roHtml(POINTS[+g.dataset.i]); setHot(g); }
+    }
+    wrap.addEventListener("pointermove", update);
+    wrap.addEventListener("pointerdown", update);
+    wrap.addEventListener("pointerleave", () => { ro.innerHTML = idle; setHot(null); });
+    wrap.addEventListener("click", (ev) => {
+      const g = ev.target.closest && ev.target.closest(".hd-row");
+      if (g) play(POINTS[+g.dataset.i]);
+    });
+  });
+</script>
+
+<style is:global>
+  .hd { margin-block: 2rem; }
+  .hd-wrap { position: relative; }
+  .hd-svg { display: block; width: 100%; height: auto; }
+  .hd-lab { font-family: Inter, system-ui, sans-serif; font-size: 15px; font-weight: 700; fill: #2c2620; }
+  .hd-sub { font-weight: 400; font-size: 12px; fill: #8a8279; }
+
+  .hd-hit { pointer-events: all; cursor: pointer; }
+  .hd-row rect:not(.hd-hit) { pointer-events: none; }
+  .hd-rows.dim .hd-row:not(.is-hot) { opacity: 0.28; transition: opacity 0.08s; }
+  .hd-row.is-hot rect:not(.hd-hit) { stroke: #2c2620; stroke-width: 0.6; }
+
+  /* readout */
+  .hd-readout {
+    min-height: 70px; margin-top: 0.7rem; padding: 0.55rem 0.7rem;
+    border: 1px solid rgb(var(--color-border)); border-radius: 8px; background: #fffdf8;
+    font-family: Inter, system-ui, sans-serif;
+  }
+  .hd-hint { color: rgb(var(--color-muted)); font-size: 0.85rem; }
+  .hd-ro-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.55rem; margin-bottom: 0.35rem; }
+  .hd-chip { color: #fff; font-size: 0.72rem; font-weight: 700; padding: 0.06rem 0.45rem; border-radius: 999px; text-transform: capitalize; }
+  .hd-stat { font-size: 0.78rem; color: rgb(var(--color-muted)); }
+  .hd-stat b { color: rgb(var(--color-text)); font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  .hd-play { font-size: 0.74rem; font-weight: 700; color: #b5562e; }
+  .hd-cid { margin-left: auto; font-size: 0.7rem; color: rgb(var(--color-muted)); font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+  /* now-playing bar, pinned to the diptych's top-right */
+  .hd-nowplaying {
+    position: absolute; top: 0.4rem; right: 0.5rem; z-index: 5;
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.12rem 0.3rem 0.12rem 0.55rem;
+    background: #f2ece0; border: 1px solid rgb(var(--color-border)); border-radius: 999px;
+    font-size: 0.72rem; font-family: 'JetBrains Mono', ui-monospace, monospace;
+    color: rgb(var(--color-text)); box-shadow: 0 2px 8px rgba(40, 34, 26, 0.1);
+  }
+  .hd-nowplaying[hidden] { display: none; }
+  .hd-np-ic { color: #b5562e; font-size: 0.66rem; }
+  .hd-np-stop { border: none; background: #e2d9c8; color: #2c2620; border-radius: 999px; padding: 0 0.4rem; cursor: pointer; font-size: 0.7rem; }
+  .hd-np-stop:hover { background: #d6c9b2; }
+  .hd-fld { display: flex; gap: 0.5rem; font-size: 0.82rem; line-height: 1.4; }
+  .hd-fld > span { flex: none; width: 3.2rem; text-transform: uppercase; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.05em; color: rgb(var(--color-muted)); padding-top: 0.18rem; }
+  .hd-fld > div { font-family: 'JetBrains Mono', ui-monospace, monospace; color: rgb(var(--color-text)); word-break: break-word; }
+
+  .hd-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.2rem; margin-top: 0.6rem; }
+  .hd-legbar { display: inline-flex; align-items: center; gap: 0.45rem; }
+  .hd-legtxt, .hd-key { font-size: 0.72rem; color: rgb(var(--color-muted)); font-family: Inter, system-ui, sans-serif; }
+  .hd-cap { margin-top: 0.6rem; font-size: 0.82rem; color: rgb(var(--color-muted)); line-height: 1.5; text-align: center; }
+  .hd-cap strong { color: rgb(var(--color-text)); }
+</style>

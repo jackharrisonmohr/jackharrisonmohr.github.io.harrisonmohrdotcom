@@ -1,5 +1,5 @@
 ---
-title: "How Does Your Voice Agent Know When It Mishears? (v6 preview)"
+title: "How Does Your Voice Agent Know When It Mishears?"
 subtitle: "Building a voice-agent benchmark for degraded audio scenarios."
 description: "A model upgrade made my voice-agent pipeline less safe. The thread tying it together was a confidence score that measures the wrong thing — and measures it worse exactly when it matters."
 date: 2026-05-29
@@ -11,6 +11,9 @@ import Figure from "../../components/mdx/Figure.astro";
 import AudioSample from "../../components/mdx/AudioSample.astro";
 import AgentFlowDemo from "../../components/mdx/AgentFlowDemo.astro";
 import SurfaceCerScatter from "../../components/mdx/SurfaceCerScatter.astro";
+import HeroDiptych from "../../components/mdx/HeroDiptych.astro";
+
+<HeroDiptych />
 
 <Callout type="info" label="TL;DR">
 When a voice agent has to capture a critical value — an ID, a medication, a street address — over a noisy line, how does it know it heard right? The natural answer is the speech-to-text (ASR) model's own **confidence score**. But that score measures how confidently the model decoded *some* transcript, not whether the transcript is *correct* — and it's least reliable on the degraded audio where you need it most. Scaling the model up doesn't rescue you: counterintuitively, the bigger model is *more* likely to commit a wrong answer, because it stops abstaining and its confidence floats up past a threshold tuned for the smaller one.
