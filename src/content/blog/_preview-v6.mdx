@@ -10,6 +10,7 @@ import Callout from "../../components/mdx/Callout.astro";
 import Figure from "../../components/mdx/Figure.astro";
 import AudioSample from "../../components/mdx/AudioSample.astro";
 import AgentFlowDemo from "../../components/mdx/AgentFlowDemo.astro";
+import SurfaceCerScatter from "../../components/mdx/SurfaceCerScatter.astro";
 
 <Callout type="info" label="TL;DR">
 If your voice agent needs to capture a critical piece of info like an ID, a medication, or a street address, how does it know if it heard correctly? Real-world audio channels are often distorted, and when failure is unacceptable, you need something more robust than just asking for confirmation.
@@ -52,8 +53,10 @@ The benchmark simulates the challenge of capturing essential info over degraded 
 | heavy | 25 | phone bandpass + 5 dB SNR + light dropout |
 | severe | 25 | phone bandpass + −12 dB SNR + 250 ms dropout @ 55% per-window |
 
+### Simulating phone distortion
 The deterministic degradation pipeline simulates the sort of distortion artifacts that you hear on a phone call (you might say it's a bit phone-y[^1]): a 300–3400 Hz bandpass (the standard phone band), a μ-law codec roundtrip (the standard phone codec), additive white noise at a configurable SNR, and packet dropout where 250 ms windows are silenced at a configurable probability. The severe bucket layers all four and pushes things beyond human-level recoverability. Also, the catalog is seeded, so rerunning the generator produces byte-identical fixtures.
 
+### The agent loop
 For each case, the agent being tested receives the audio file and chooses one of three actions: commit a transcription, ask the rep to repeat (one retry allowed), or escalate to a human. To recap, on the cases where the audio is actually unintelligible, the right behavior is to escalate. If your agent is recording something like a medication, an emergency address, or a patient identifier, you want it to fail loudly. The benchmark then grades the agent on % accuracy as well as escalation precision/recall (i.e. to what extent did it escalate on impossible cases but not on tractable cases?).
 
 To exercise the benchmark I built a simple deterministic agent that wraps a Whisper ASR model.[^4] The agent transcribes the audio, runs a deliberately simple parser over the transcript, and decides whether to escalate based on Whisper's confidence. My agent's austere escalation policy looks like this:
@@ -70,7 +73,7 @@ def decide(asr_text: str, confidence: float) -> Action:
         return AskForRepeat()
     return Commit(parsed)
 ```
-
+### Simplifying Assumptions Focus The Benchmark
 What we're doing here is taking a surgical approach to checking a single domain-specific high-stakes failure mode. By discarding extraneous details we're able to better isolate what we're interested in.
 
 Some of the complexities this setup removes:
@@ -92,6 +95,7 @@ I ran my agent on the benchmark with four different Whisper ASR model sizes. Whe
   caption="Running the benchmark on my agent with four Whisper sizes. Default thresholds throughout (CONFIRM_BELOW=0.55)."
 />
 
+### All the ways you could have missed this regression
 The fix in this case turned out to be trivial but there are a lot of ways one could have missed this regression. Let's walk through the layers of how you might miss it in practice:
 
 1. **Having an agent that has no way of knowing how confident it is in its transcription** (from my personal conversations, this seems to remain common as of this writing). In this case it's a moot point and you'll find out from your customers.
@@ -133,7 +137,21 @@ Post-calibration, better models indeed performed better on both capture accuracy
 
 Recalibration works, but it's a band-aid — and notice what the band-aid quietly admits. The "right" threshold isn't a property of your task; it moved from 0.55 to 0.75 just because I swapped the model. That should bother you. A confidence of 0.7 evidently means something different coming out of large-v3 than coming out of tiny.en, and something different again depending on how bad the audio is. So before reaching for a better calibration trick, it's worth asking the more basic question: **what is this number actually measuring, and why does its meaning slide around?**
 
-The short answer, again, is that `exp(avg_logprob)` measures how sure the decoder was about the tokens it emitted, not whether those tokens are correct. To see how far those two things drift apart — and where — I had to stop trusting the benchmark's own scoring and measure "wrongness" more honestly.
+Start by being precise about where the number comes from. Whisper is an autoregressive encoder–decoder Transformer. The encoder turns the audio's log-mel spectrogram into a latent sequence; the decoder is a language model that emits text tokens one at a time, each conditioned on (a) the audio, via cross-attention, and (b) the tokens it has already emitted, via causal self-attention. At every step it produces a softmax over the entire ~51.9k-token BPE vocabulary and picks one. So it is genuinely next-token prediction — the only difference from a text-only LLM is the extra cross-attention into the audio.
+
+And `exp(avg_logprob)` is *literally* the geometric mean of those per-step probabilities: `avg_logprob` is the mean of `log P(chosen token)` over the emitted tokens, so `exp(avg_logprob)` is the typical probability the decoder assigned to each word it committed to. High means it concentrated mass on what it emitted at each step (decisive); low means it spread its bets. It measures *decisiveness*, not fidelity to the audio — which is the whole story of this post.
+
+You can watch the mechanism happen. Here is whisper-tiny.en decoding a spoken ID one token at a time — on clean audio (top) and on severe audio (bottom). Each panel is the model's probability distribution over the *next* token, top five candidates; the coloured bar is the token it actually committed to and fed back in for the following step.[^5]
+
+<Figure
+  src="/images/asr-calibration/fig_nexttoken_filmstrip.png"
+  alt="Twelve small horizontal bar charts in two rows. The top row (clean audio) shows whisper-tiny.en's next-token distribution at six consecutive decoding steps, each dominated by a single near-certain token spelling out an ID. The bottom row (severe audio) shows the distribution smeared across several low-probability candidates at each step."
+  caption="One decoding step per panel. On clean audio the distribution collapses onto a single token every step (a high geometric mean). On severe audio the model is guessing — the first token spreads across 'You / Welcome / Oh / This / you', none above a few percent — yet the later steps sharpen again as its language prior carries a fluent sentence forward."
+/>
+
+On the clean line the distribution collapses onto one token at every step — `R → as → in → Romeo → …`, each a near-certain spike, which is exactly what a confidence near 1.0 looks like up close. On the severe line the same model is guessing: the very first token splits its mass across `You / Welcome / Oh / This / you`, nothing above a few percent. But watch what happens after it commits to "You" — the later steps sharpen right back up ("know what I'm going to…"), because once a fluent English sentence is underway it is easy to continue *as language*, regardless of whether it matches the audio. The confidence partially recovers — on a complete fabrication.
+
+So the short answer is the one I keep circling back to: `exp(avg_logprob)` measures how sure the decoder was about the tokens it emitted, not whether those tokens are correct. To see how far those two things drift apart — and where — I had to stop trusting the benchmark's own scoring and measure "wrongness" more honestly.
 
 ### First, measuring "wrong" honestly
 
@@ -143,11 +161,7 @@ So instead I score against what was actually *spoken*, on the raw transcript, wi
 
 Plot every transcription that way — raw, uncapped error against the model's confidence — and the picture stops looking like a calibration curve and starts looking like weather.
 
-<Figure
-  src="/images/asr-calibration/fig_cer_vs_confidence.svg"
-  alt="Two scatter panels of character error rate versus ASR confidence, one dot per transcription, coloured by distortion bucket and shaped by model. Left panel uses raw uncapped CER and shows a wide downward-sloping cloud rising well above 1.0 for hallucinations. Right panel uses the saturating committed CER, flattened against a 1.0 ceiling."
-  caption="Every transcription, error vs. confidence. Left: raw (uncapped) error shows how wrong the hallucinations really are. Right: the saturating 'committed' error hides it under a 1.0 ceiling. Note the cloud, not a line — and the grey ✗ stack of abstentions at confidence 0."
-/>
+<SurfaceCerScatter />
 
 ### Confidence is a cloud, not a line
 
@@ -254,7 +268,7 @@ When I built the benchmark, I didn't predict the model-swap miscalibration bug. 
 
 By being clear on the product-level implications of different failure modes, we can specify what it means for our agent to be shippable. In the case of my benchmark, one presumably really cares not just about transcription accuracy but also about generally preventing wrong transcription. It's good to be clear about that from the start so whatever unexpected bugs arise will be surfaced by your evals in the dimensions you care about.
 
-Finally, as many wise people have said: "As George Box once said, 'all models are wrong, but some are useful.'" By understanding how our proxy metric diverges from reality, we stand a better chance at identifying root causes of our agents' aberrant behavior. By reasoning through why the map is different from the territory we can make map v2 more robust. Otherwise we resort to band-aid solutions.
+Finally, as many wise people have said: "As George Box once said, 'all models are wrong, but some are useful.'" By understanding how our proxy metric diverges from reality, we stand a better chance at identifying root causes of our agents' aberrant behavior. By reasoning through why the map is different from the territory we can make map-v2 more robust. Otherwise we resort to band-aid solutions.
 
 In conclusion then, if you want your agent to know when it mishears, make sure you reason through *how* the agent 'knows'. Don't just be like, "was the ASR confident?" Given the audio, transcript, task context, and downstream cost, is there enough evidence to commit this field? And if nothing else, make sure your evals measure what you care about, so the bugs you didn't predict still pop up somewhere you're looking.
 
@@ -275,3 +289,5 @@ I'm the founding engineer at MakeTimeFlow building production AI agents and goin
 [^3]: This of course is a very small, practical, and near-term version of the far grander and more serious AI alignment problem. It is, however, categorically different, in that long-horizon alignment of super-intelligent AI raises some pretty deep and open questions for science and philosophy, while what we're talking about here is much more of a tractable and grounded matter: specifying what you want from the country of geniuses in the datacenter is way harder than specifying what you want from your call center customer support agent.
 
 [^4]: A lot of voice agents these days still use the modular ASR → LLM → TTS architecture, though surely multimodal models stand a good chance of replacing that stack. Anyway, the benchmark itself doesn't need to know *how* an agent decides whether to escalate. It feeds audio samples and grades the agent on its behavior.
+
+[^5]: The decoding shown in this figure is *greedy* — take the single most-probable token at each step — because that yields one unambiguous distribution to plot per panel. The benchmark itself used beam search, which keeps several candidate sentences alive at once and returns the highest-probability complete one. Beam search can only match or beat greedy on total sequence probability, so it nudges the confidence number up a hair; for the two clips shown, the reproduced geometric mean lands within 0.03 of the benchmark's logged value (clean 0.77 vs 0.79, severe 0.35 vs 0.38). The per-step distributions themselves don't depend on which strategy you use to walk the token tree.
