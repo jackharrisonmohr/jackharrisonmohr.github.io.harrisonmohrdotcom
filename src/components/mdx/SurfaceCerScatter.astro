@@ -250,6 +250,7 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
   <figcaption class="scp-cap">
     {meta.n} transcriptions across four Whisper sizes and five distortion tiers.
     Surface CER is uncapped (true max {meta.emax}×) but clamped to {ax(YMAX)} for display.
+    The black line is the <strong>median</strong> surface CER within each 0.1-wide confidence bin (bins with ≥4 points) — a robust summary that ignores the hallucination tail, not a fitted regression.
     Confidence tracks error only moderately (ρ = {meta.rho_all}) — a soft hint, not a reliable mishearing detector.
   </figcaption>
 
