@@ -15,7 +15,7 @@ const { meta, trend, points } = data as {
   meta: { n: number; ymax: number; rho_all: number; rho_excl: number;
           n_abstain: number; clamped: number; emax: number };
   trend: [number, number][];
-  points: { m: string; t: string; c: number; e: number; a: boolean; s: string; r: string }[];
+  points: { m: string; t: string; c: number; e: number; a: boolean; s: string; r: string; au?: string }[];
 };
 
 const YMAX = meta.ymax;
@@ -180,7 +180,12 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
 <figure class="scp my-8 not-prose">
   <div class="scp-head">
     <div class="scp-title">ASR confidence vs surface character-error-rate</div>
-    <div class="scp-sub">Every transcription, one dot — raw transcript scored against what was actually spoken (formatting neutralized, acoustic confusions kept). Hover a dot for its data.</div>
+    <div class="scp-sub">Every transcription, one dot — raw transcript scored against what was actually spoken (formatting neutralized, acoustic confusions kept). Hover a dot for its data; <b>click to hear the audio clip</b>.</div>
+    <div class="scp-audiobar" hidden>
+      <span class="scp-audiobar-icon">▶</span>
+      <span class="scp-audiobar-txt"></span>
+      <button class="scp-audiobar-stop" type="button" aria-label="Stop audio">■ stop</button>
+    </div>
   </div>
 
   <div class="scp-wrap">
@@ -277,6 +282,11 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
   const TIER_COLOR = { clean: "#4C9F70", light: "#7FB069", moderate: "#E6A02C", severe: "#D9534F", heavy: "#7A3B69" };
   const TIER_SHAPE = { clean: "o", light: "^", moderate: "s", severe: "D", heavy: "P" };
 
+  // playback volume per distortion tier — severe/heavy are mostly white noise and
+  // clip hot, so they're attenuated. TUNE THESE to taste (0..1, attenuation only).
+  const TIER_VOLUME = { clean: 1.0, light: 0.9, moderate: 0.8, heavy: 0.5, severe: 0.32 };
+  const AUDIO_BASE = "/audio/asr-calibration/";
+
   const esc = (s) =>
     String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -334,7 +344,11 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
       ? `<div class="scp-tip-note">40 abstentions total (29 tiny · 5 small · 6 medium), all severe; confidence pinned to 0.</div>`
       : (p.e > YMAX ? `<div class="scp-tip-note">*surface CER ${p.e.toFixed(2)} — clamped to ${YMAX} on the plot.</div>` : ``);
 
-    return head + stats + spoken + heard + note;
+    const audio = p.au
+      ? `<div class="scp-tip-audio">🔊 click to play — ${p.t} @ ${Math.round((TIER_VOLUME[p.t] ?? 1) * 100)}% vol</div>`
+      : ``;
+
+    return head + stats + spoken + heard + note + audio;
   }
 
   document.querySelectorAll(".scp").forEach((root) => {
@@ -369,6 +383,32 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
     wrap.addEventListener("pointerdown", update); // tap on touch
     wrap.addEventListener("pointerleave", () => { tip.hidden = true; setHot(null); });
 
+    // click a dot to hear its audio clip (one clip per case, attenuated per tier)
+    const bar = root.querySelector(".scp-audiobar");
+    const barTxt = root.querySelector(".scp-audiobar-txt");
+    const barStop = root.querySelector(".scp-audiobar-stop");
+    let audioEl = null;
+    function stopAudio() {
+      if (audioEl) { audioEl.pause(); audioEl.src = ""; audioEl = null; }
+      if (bar) bar.hidden = true;
+    }
+    function playDot(p) {
+      if (!p || !p.au) return;
+      stopAudio();
+      const vol = TIER_VOLUME[p.t] ?? 1;
+      audioEl = new Audio(AUDIO_BASE + p.au);
+      audioEl.volume = vol;
+      audioEl.play().catch(() => {});
+      audioEl.addEventListener("ended", stopAudio);
+      if (barTxt) barTxt.textContent = `${p.au.replace("_attempt1.mp3", "")} · ${p.t} · vol ${Math.round(vol * 100)}%`;
+      if (bar) bar.hidden = false;
+    }
+    wrap.addEventListener("click", (ev) => {
+      const g = ev.target.closest && ev.target.closest(".scp-pt");
+      if (g) playDot(POINTS[+g.dataset.i]);
+    });
+    if (barStop) barStop.addEventListener("click", stopAudio);
+
     // hovering a mini "regime" plot isolates that regime in the main plot above
     root.querySelectorAll(".scp-mini").forEach((mini) => {
       const cls = mini.dataset.mode === "sev" ? "scp-only-sev" : "scp-only-nonsev";
@@ -394,6 +434,30 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
     font-size: 0.85rem; color: rgb(var(--color-muted)); margin-top: 0.2rem;
     line-height: 1.4;
   }
+  .scp-sub b { color: rgb(var(--color-text)); font-weight: 600; }
+
+  /* now-playing bar */
+  .scp-audiobar {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    margin-top: 0.5rem; padding: 0.2rem 0.3rem 0.2rem 0.7rem;
+    background: #f2ece0; border: 1px solid rgb(var(--color-border));
+    border-radius: 999px; font-family: Inter, system-ui, sans-serif;
+    font-size: 0.78rem; color: rgb(var(--color-text));
+  }
+  .scp-audiobar[hidden] { display: none; }
+  .scp-audiobar-icon { color: #b5562e; font-size: 0.7rem; }
+  .scp-audiobar-txt { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  .scp-audiobar-stop {
+    border: none; background: #e2d9c8; color: #2c2620;
+    border-radius: 999px; padding: 0.1rem 0.5rem; cursor: pointer;
+    font-size: 0.72rem; font-family: Inter, system-ui, sans-serif;
+  }
+  .scp-audiobar-stop:hover { background: #d6c9b2; }
+  .scp-tip-audio {
+    margin-top: 0.45rem; padding-top: 0.4rem;
+    border-top: 1px solid rgb(var(--color-border));
+    font-size: 0.72rem; font-weight: 600; color: #b5562e;
+  }
 
   .scp-wrap {
     position: relative;
@@ -416,7 +480,7 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
   /* dots */
   .scp-marker { stroke: #fff; stroke-width: 0.45; opacity: 0.82; }
   .scp-x { opacity: 0.92; }
-  .scp-hit { pointer-events: all; }
+  .scp-hit { pointer-events: all; cursor: pointer; }
   .scp-pt .scp-marker { pointer-events: none; transition: stroke 0.08s; }
   .scp-pt.is-hot .scp-marker { stroke: #2c2620; stroke-width: 1.4; opacity: 1; }
   .scp-pt.is-hot .scp-x { stroke: #2c2620; stroke-width: 2; }
