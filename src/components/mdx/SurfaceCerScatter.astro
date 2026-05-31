@@ -181,11 +181,6 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
   <div class="scp-head">
     <div class="scp-title">ASR confidence vs surface character-error-rate</div>
     <div class="scp-sub">Every transcription, one dot — raw transcript scored against what was actually spoken (formatting neutralized, acoustic confusions kept). Hover a dot for its data; <b>click to hear the audio clip</b>.</div>
-    <div class="scp-audiobar" hidden>
-      <span class="scp-audiobar-icon">▶</span>
-      <span class="scp-audiobar-txt"></span>
-      <button class="scp-audiobar-stop" type="button" aria-label="Stop audio">■ stop</button>
-    </div>
   </div>
 
   <div class="scp-wrap">
@@ -232,6 +227,11 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
     </svg>
 
     <div class="scp-tip" hidden></div>
+    <div class="scp-audiobar" hidden>
+      <span class="scp-audiobar-icon">▶</span>
+      <span class="scp-audiobar-txt"></span>
+      <button class="scp-audiobar-stop" type="button" aria-label="Stop audio">■ stop</button>
+    </div>
   </div>
 
   <!-- legends -->
@@ -436,15 +436,21 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
   }
   .scp-sub b { color: rgb(var(--color-text)); font-weight: 600; }
 
-  /* now-playing bar */
+  /* now-playing bar — absolutely positioned at the plot's top-left (mirrors the
+     ρ annotation on the right) so toggling it never reflows the figure */
   .scp-audiobar {
+    position: absolute; z-index: 6; top: 0.5rem; left: 7%;
     display: inline-flex; align-items: center; gap: 0.5rem;
-    margin-top: 0.5rem; padding: 0.2rem 0.3rem 0.2rem 0.7rem;
+    padding: 0.2rem 0.3rem 0.2rem 0.7rem;
     background: #f2ece0; border: 1px solid rgb(var(--color-border));
     border-radius: 999px; font-family: Inter, system-ui, sans-serif;
     font-size: 0.78rem; color: rgb(var(--color-text));
+    box-shadow: 0 2px 8px rgba(40, 34, 26, 0.10);
   }
   .scp-audiobar[hidden] { display: none; }
+  @media (max-width: 560px) {
+    .scp-audiobar { font-size: 0.66rem; left: 4%; gap: 0.3rem; }
+  }
   .scp-audiobar-icon { color: #b5562e; font-size: 0.7rem; }
   .scp-audiobar-txt { font-family: 'JetBrains Mono', ui-monospace, monospace; }
   .scp-audiobar-stop {
