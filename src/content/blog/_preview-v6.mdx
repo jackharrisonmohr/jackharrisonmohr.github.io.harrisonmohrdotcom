@@ -155,9 +155,28 @@ So the short answer is the one I keep circling back to: `exp(avg_logprob)` measu
 
 ### First, measuring "wrong" honestly
 
-The intuitive way to score a transcription is character error rate against the right answer. But the *right answer you compare against* changes the conclusion completely. My agent's committed value is the post-parser ID string, and if you score *that* against the canonical ID, a wild hallucination collapses to a near-empty string: a one-character slip and a twenty-word fabrication both land at a CER of about 1.0. The metric saturates exactly where the behavior gets interesting — it literally cannot tell you *how* wrong a confident hallucination is.
+To ask whether confidence tracks correctness, I need the *other* axis: a single number per transcription for how wrong it actually was, that I can plot against the model's confidence. "Right vs. wrong" is too blunt — a transcript that drops one digit and one that invents a whole sentence are both "wrong," but they are not the same failure, and the question is precisely whether confidence falls as the wrongness grows. Character error rate gives that graded measure.
 
-So instead I score against what was actually *spoken*, on the raw transcript, with no cap on the error. Now a hallucination is allowed to be as wrong as it really is — a transcript that invents a whole sentence racks up an error rate several times the length of the true utterance (I saw up to 13×). (Getting this measure to behave took some care: phonetic scaffolding like "B as in bravo" and the choice between "five" and "5" have to be normalized away, or a *correct* hearing looks wrong on formatting alone. I validated the normalizer so that known-correct hearings sit at a median CER of 0.000 and known hallucinations at 5.44 — cleanly separated.)
+CER is just edit distance over the length of the reference:
+
+```
+CER = levenshtein(reference, transcript) / length(reference)
+```
+
+The [Levenshtein](https://en.wikipedia.org/wiki/Levenshtein_distance) (edit) distance is the minimum number of single-character insertions, deletions, or substitutions needed to turn one string into the other. Identical strings score 0; the more the transcript has to be rewritten to match what was said, the higher it climbs. Because the denominator is the *reference* length, a transcript longer than the truth — a fabricated sentence standing in for a short ID — can score well above 1.0.
+
+The catch is that the *reference you compare against* changes the conclusion completely. My agent's committed value is the post-parser ID string, and if you score *that* against the canonical ID, a wild hallucination collapses to a near-empty string: a one-character slip and a twenty-word fabrication both land at a CER of about 1.0. The metric saturates exactly where the behavior gets interesting — it literally cannot tell you *how* wrong a confident hallucination is.
+
+So instead I score the *raw transcript* against what was actually *spoken*, with no cap. The one bit of care: normalize away formatting that isn't a mishearing — lowercase, drop spaces and punctuation, treat "five" and "5" as identical — while keeping the actual words, so a genuine acoustic slip like hearing "tango" as "mango" still counts. A correct hearing then scores ≈0 however it was spelled out, and a hallucination is free to be as wrong as it really is.
+
+A worked example. The rep says *"S as in sierra, X-ray, 1, 1, 8, 5"* and Whisper returns *"S is in Sierra, X-ray, 118.5."* Normalized, those become
+
+```
+ref: sasinsierraxray1185   (what was spoken)
+hyp: sisinsierraxray1185   (what Whisper heard)
+```
+
+— one substitution (the "a" of "as" became the "i" of "is") over a 19-character reference, so CER = 1/19 ≈ **0.05**: a near-perfect hearing, and you can see exactly why. Now contrast a severe-audio hallucination — the rep spells out a short ID and Whisper returns *"Hello, welcome to this channel. Real fast, real fast…"* — which shares almost nothing with what was said, so the edit distance is essentially the entire fabricated sentence and the CER lands several times higher (up to ≈4× across this benchmark).
 
 Plot every transcription that way — raw, uncapped error against the model's confidence — and the picture stops looking like a calibration curve and starts looking like weather.
 
@@ -165,9 +184,9 @@ Plot every transcription that way — raw, uncapped error against the model's co
 
 ### Confidence is a cloud, not a line
 
-If you pool every transcription together, confidence and error are negatively correlated at about ρ = −0.74, which sounds reassuringly strong. But that number is a mirage. It mostly reflects that clean audio lives in one corner (high confidence, low error) and severe audio in another (low confidence, high error). Pooling the two manufactures a correlation that exists *between* conditions but not *within* any one of them — and at inference time you are always inside a single condition, never the pool.
+If you pool every transcription together, confidence and error are negatively correlated at about ρ = −0.83 (−0.81 with the abstentions set aside), which sounds reassuringly strong. But that number is inflated by mixing conditions. It mostly reflects that clean audio lives in one corner (high confidence, low error) and severe audio in another (low confidence, high error). Pooling the two manufactures a correlation that exists *between* conditions more than *within* any one of them — and at inference time you are always inside a single condition, never the pool.
 
-Look within each bucket — the only view that matches what your agent faces in the moment — and the relationship is weak: ρ between roughly −0.3 and −0.5 across models and buckets. Even on pristine clean audio, confidence ranks the model's errors only loosely. It was never a tight proxy for correctness. It's a soft hint, and the rest of this section is about the three different ways that hint deteriorates as the channel degrades.
+Look within a single bucket — the only view that matches what your agent faces in the moment — and the relationship loosens and turns uneven. Pooled by tier it runs from about −0.34 (light, severe) to −0.75 (heavy); slice it finer into individual model×bucket cells and the median is just −0.43, with cells scattering from −0.72 all the way to slightly *positive*. So confidence is a soft, unreliable hint about correctness, not a tight proxy — and the rest of this section is about the three different ways that hint deteriorates as the channel degrades.
 
 ### Three things break, all at once
 
