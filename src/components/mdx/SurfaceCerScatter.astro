@@ -69,7 +69,12 @@ const dotsHtml =
   points.map((p, i) => (p.a ? "" : dotGroup(p, i))).join("") +
   points.map((p, i) => (p.a ? dotGroup(p, i) : "")).join("");
 
-const trendPts = trend.map(([x, y]) => `${xpx(x).toFixed(1)},${ypx(y).toFixed(1)}`).join(" ");
+// one binned-median regression line as an SVG group (polyline + node dots)
+function trendGroup(tr: [number, number][], cls: string) {
+  const pts = tr.map(([x, y]) => `${xpx(x).toFixed(1)},${ypx(y).toFixed(1)}`).join(" ");
+  const dots = tr.map(([x, y]) => `<circle cx="${xpx(x).toFixed(1)}" cy="${ypx(y).toFixed(1)}" r="3" fill="#2c2620"/>`).join("");
+  return `<g class="scp-trend ${cls}"><polyline points="${pts}" fill="none" stroke="#2c2620" stroke-width="2"/>${dots}</g>`;
+}
 
 // Spearman rank correlation (tie-averaged), for the per-regime annotations
 function spearman(xs: number[], ys: number[]) {
@@ -95,6 +100,23 @@ function spearman(xs: number[], ys: number[]) {
   for (let i = 0; i < n; i++) { num += (rx[i] - mx) * (ry[i] - my); dx += (rx[i] - mx) ** 2; dy += (ry[i] - my) ** 2; }
   const den = Math.sqrt(dx * dy);
   return den ? num / den : NaN;
+}
+
+// binned median of ys over x-bins (>=4 points per bin), matching the Python trend
+function binnedMedian(xs: number[], ys: number[], edges: number[]): [number, number][] {
+  const out: [number, number][] = [];
+  for (let i = 0; i < edges.length - 1; i++) {
+    const lo = edges[i], hi = edges[i + 1];
+    const vals: number[] = [];
+    for (let k = 0; k < xs.length; k++) if (xs[k] >= lo && xs[k] < hi) vals.push(ys[k]);
+    if (vals.length >= 4) {
+      vals.sort((a, b) => a - b);
+      const n = vals.length;
+      const med = n % 2 ? vals[(n - 1) / 2] : (vals[n / 2 - 1] + vals[n / 2]) / 2;
+      out.push([(lo + hi) / 2, med]);
+    }
+  }
+  return out;
 }
 
 // --- two small "regime" plots: severe vs non-severe, sharing the same axes ---
@@ -136,6 +158,17 @@ function miniSvg(sub: typeof points) {
 const severeMini = miniSvg(severePts);
 const nonSevereMini = miniSvg(nonSeverePts);
 const rho2 = (n: number) => (n > 0 ? "+" : "−") + Math.abs(n).toFixed(2);
+
+// regression lines: the all-points line (from the JSON) plus a per-regime line
+// each, so the trend redraws to the visible subset when a mini is hovered
+const EDGES = Array.from({ length: 11 }, (_, i) => i / 10);
+const severeNe = severePts.filter((p) => !p.a);
+const severeTrend = binnedMedian(severeNe.map((p) => p.c), severeNe.map((p) => p.e), EDGES);
+const nonSevereTrend = binnedMedian(nonSeverePts.map((p) => p.c), nonSeverePts.map((p) => p.e), EDGES);
+const trendsHtml =
+  trendGroup(trend, "scp-trend-all") +
+  trendGroup(severeTrend, "scp-trend-sev") +
+  trendGroup(nonSevereTrend, "scp-trend-nonsev");
 
 // legend shape glyphs (small inline svg)
 function glyph(shape: string) {
@@ -189,11 +222,8 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
       <!-- dots (server-rendered) -->
       <g class="scp-dots" set:html={dotsHtml} />
 
-      <!-- binned-median trend -->
-      <polyline points={trendPts} fill="none" stroke="#2c2620" stroke-width="2" />
-      {trend.map(([x, y]) => (
-        <circle cx={xpx(x)} cy={ypx(y)} r="3" fill="#2c2620" />
-      ))}
+      <!-- binned-median trends: all / severe / non-severe, toggled on mini hover -->
+      <g class="scp-trends" set:html={trendsHtml} />
     </svg>
 
     <div class="scp-tip" hidden></div>
@@ -394,6 +424,13 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
   .scp-wrap.scp-only-sev .scp-pt[data-sev="0"],
   .scp-wrap.scp-only-nonsev .scp-pt[data-sev="1"],
   .scp-wrap.scp-only-nonsev .scp-abst-anno { display: none; }
+
+  /* and the regression line redraws to the visible regime */
+  .scp-trend-sev, .scp-trend-nonsev { display: none; }
+  .scp-wrap.scp-only-sev .scp-trend-all,
+  .scp-wrap.scp-only-nonsev .scp-trend-all { display: none; }
+  .scp-wrap.scp-only-sev .scp-trend-sev { display: inline; }
+  .scp-wrap.scp-only-nonsev .scp-trend-nonsev { display: inline; }
 
   /* hover info box — pinned to the empty top-right of the plot (nothing is both
      highly confident and very wrong, so it never covers data) */
