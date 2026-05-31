@@ -43,8 +43,7 @@ const TIER_SHAPE: Record<string, string> = {
 };
 const TIERS = ["clean", "light", "moderate", "severe", "heavy"];
 
-function marker(shape: string, cx: number, cy: number, fill: string) {
-  const s = 4.1;
+function marker(shape: string, cx: number, cy: number, fill: string, s = 4.1) {
   const f = `fill="${fill}"`;
   if (shape === "o") return `<circle class="scp-marker" cx="${cx}" cy="${cy}" r="${s}" ${f}/>`;
   if (shape === "s") return `<rect class="scp-marker" x="${cx - s}" y="${cy - s}" width="${2 * s}" height="${2 * s}" ${f}/>`;
@@ -61,7 +60,8 @@ function dotGroup(p: typeof points[number], i: number) {
   const cy = +ypx(p.e).toFixed(1);
   const shape = p.a ? "x" : TIER_SHAPE[p.t];
   const fill = MODEL_COLOR[p.m];
-  return `<g class="scp-pt${p.a ? " scp-abst" : ""}" data-i="${i}"><circle class="scp-hit" cx="${cx}" cy="${cy}" r="8" fill="transparent"/>${marker(shape, cx, cy, fill)}</g>`;
+  const sev = p.a || p.t === "severe" ? 1 : 0;  // abstentions are all severe
+  return `<g class="scp-pt${p.a ? " scp-abst" : ""}" data-i="${i}" data-sev="${sev}"><circle class="scp-hit" cx="${cx}" cy="${cy}" r="8" fill="transparent"/>${marker(shape, cx, cy, fill)}</g>`;
 }
 
 // draw dots first, abstentions last (on top), data-i = original index
@@ -70,6 +70,72 @@ const dotsHtml =
   points.map((p, i) => (p.a ? dotGroup(p, i) : "")).join("");
 
 const trendPts = trend.map(([x, y]) => `${xpx(x).toFixed(1)},${ypx(y).toFixed(1)}`).join(" ");
+
+// Spearman rank correlation (tie-averaged), for the per-regime annotations
+function spearman(xs: number[], ys: number[]) {
+  const n = xs.length;
+  if (n < 3) return NaN;
+  const rank = (v: number[]) => {
+    const order = [...v.keys()].sort((a, b) => v[a] - v[b]);
+    const rk = new Array(n).fill(0);
+    let i = 0;
+    while (i < n) {
+      let j = i;
+      while (j + 1 < n && v[order[j + 1]] === v[order[i]]) j++;
+      const avg = (i + j) / 2 + 1;
+      for (let k = i; k <= j; k++) rk[order[k]] = avg;
+      i = j + 1;
+    }
+    return rk;
+  };
+  const rx = rank(xs), ry = rank(ys);
+  const mean = (a: number[]) => a.reduce((s, x) => s + x, 0) / a.length;
+  const mx = mean(rx), my = mean(ry);
+  let num = 0, dx = 0, dy = 0;
+  for (let i = 0; i < n; i++) { num += (rx[i] - mx) * (ry[i] - my); dx += (rx[i] - mx) ** 2; dy += (ry[i] - my) ** 2; }
+  const den = Math.sqrt(dx * dy);
+  return den ? num / den : NaN;
+}
+
+// --- two small "regime" plots: severe vs non-severe, sharing the same axes ---
+const isSevere = (p: typeof points[number]) => p.a || p.t === "severe";
+const severePts = points.filter(isSevere);
+const nonSeverePts = points.filter((p) => !isSevere(p));
+
+function subsetRho(sub: typeof points) {  // excl. abstentions (a degenerate stack)
+  const ne = sub.filter((p) => !p.a);
+  return spearman(ne.map((p) => p.c), ne.map((p) => p.e));
+}
+const severeRho = subsetRho(severePts);
+const nonSevereRho = subsetRho(nonSeverePts);
+
+const MINI = { W: 372, H: 250, m: { t: 12, r: 12, b: 30, l: 30 } };
+function miniSvg(sub: typeof points) {
+  const { W, H, m } = MINI;
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const mx = (c: number) => m.l + ((c - XD0) / (XD1 - XD0)) * pw;
+  const my = (e: number) => m.t + (1 - (Math.min(e, YMAX) - YD0) / (YD1 - YD0)) * ph;
+  const grid = [0, 1, 2, 3]
+    .map((t) => `<line x1="${m.l}" x2="${W - m.r}" y1="${my(t).toFixed(1)}" y2="${my(t).toFixed(1)}" stroke="#ece6da" stroke-width="1"/>`)
+    .join("");
+  const ref = `<line x1="${m.l}" x2="${W - m.r}" y1="${my(1).toFixed(1)}" y2="${my(1).toFixed(1)}" stroke="#9a9286" stroke-width="1" stroke-dasharray="4 3"/>`;
+  const frame = `<line x1="${m.l}" x2="${m.l}" y1="${m.t}" y2="${H - m.b}" stroke="#b8b0a6"/><line x1="${m.l}" x2="${W - m.r}" y1="${H - m.b}" y2="${H - m.b}" stroke="#b8b0a6"/>`;
+  const xt = [0, 0.5, 1]
+    .map((t) => `<text x="${mx(t).toFixed(1)}" y="${H - m.b + 13}" class="scp-mtick" text-anchor="middle">${t}</text>`)
+    .join("");
+  const yt = [0, 1, 2, 3]
+    .map((t) => `<text x="${m.l - 5}" y="${(my(t) + 3).toFixed(1)}" class="scp-mtick" text-anchor="end">${t}</text>`)
+    .join("");
+  // non-abstention dots first, abstentions (grey x) on top
+  const dotStr = (p: typeof points[number]) =>
+    marker(p.a ? "x" : TIER_SHAPE[p.t], +mx(p.c).toFixed(1), +my(p.e).toFixed(1), MODEL_COLOR[p.m], 2.9);
+  const dots = sub.filter((p) => !p.a).map(dotStr).join("") + sub.filter((p) => p.a).map(dotStr).join("");
+  const xlab = `<text x="${m.l + pw / 2}" y="${H - 3}" class="scp-mlab" text-anchor="middle">confidence →</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" class="scp-mini-svg" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${grid}${ref}${frame}${xt}${yt}${dots}${xlab}</svg>`;
+}
+const severeMini = miniSvg(severePts);
+const nonSevereMini = miniSvg(nonSeverePts);
+const rho2 = (n: number) => (n > 0 ? "+" : "−") + Math.abs(n).toFixed(2);
 
 // legend shape glyphs (small inline svg)
 function glyph(shape: string) {
@@ -117,8 +183,8 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
       <text x={W - M.r} y={M.t - 14} class="scp-clamp" text-anchor="end">{meta.clamped} dots clamped at {ax(YMAX)} (true max {meta.emax})</text>
 
       <!-- abstention callout -->
-      <text x={xpx(0.14)} y={ypx(2.05)} class="scp-abnote">abstentions (empty transcript, n={meta.n_abstain})</text>
-      <line x1={xpx(0.14)} y1={ypx(1.95)} x2={xpx(0.012)} y2={ypx(1.05)} stroke="#9a9286" stroke-width="0.9" />
+      <text x={xpx(0.14)} y={ypx(2.05)} class="scp-abnote scp-abst-anno">abstentions (empty transcript, n={meta.n_abstain})</text>
+      <line class="scp-abst-anno" x1={xpx(0.14)} y1={ypx(1.95)} x2={xpx(0.012)} y2={ypx(1.05)} stroke="#9a9286" stroke-width="0.9" />
 
       <!-- dots (server-rendered) -->
       <g class="scp-dots" set:html={dotsHtml} />
@@ -156,6 +222,23 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
     Surface CER is uncapped (true max {meta.emax}×) but clamped to {ax(YMAX)} for display.
     Confidence tracks error only moderately (ρ = {meta.rho_all}) — a soft hint, not a reliable mishearing detector.
   </figcaption>
+
+  <!-- two regimes: severe vs the rest. hover one to isolate it in the plot above -->
+  <div class="scp-regimes">
+    <div class="scp-regimes-head">Two regimes — <b>hover</b> either to isolate it in the plot above</div>
+    <div class="scp-mini-row">
+      <div class="scp-mini" data-mode="sev">
+        <div class="scp-mini-title"><span class="scp-mini-dot scp-mini-sev"></span>severe audio</div>
+        <Fragment set:html={severeMini} />
+        <div class="scp-mini-cap">n={severePts.length} · ρ {rho2(severeRho)} <span>(excl. abstentions)</span></div>
+      </div>
+      <div class="scp-mini" data-mode="nonsev">
+        <div class="scp-mini-title"><span class="scp-mini-dot scp-mini-nonsev"></span>non-severe audio</div>
+        <Fragment set:html={nonSevereMini} />
+        <div class="scp-mini-cap">n={nonSeverePts.length} · ρ {rho2(nonSevereRho)}</div>
+      </div>
+    </div>
+  </div>
 </figure>
 
 <script define:vars={{ POINTS: points, YMAX }}>
@@ -254,6 +337,16 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
     wrap.addEventListener("pointermove", update);
     wrap.addEventListener("pointerdown", update); // tap on touch
     wrap.addEventListener("pointerleave", () => { tip.hidden = true; setHot(null); });
+
+    // hovering a mini "regime" plot isolates that regime in the main plot above
+    root.querySelectorAll(".scp-mini").forEach((mini) => {
+      const cls = mini.dataset.mode === "sev" ? "scp-only-sev" : "scp-only-nonsev";
+      const on = () => wrap.classList.add(cls);
+      const off = () => wrap.classList.remove(cls);
+      mini.addEventListener("pointerenter", on);
+      mini.addEventListener("pointerleave", off);
+      mini.addEventListener("pointerdown", on); // tap to isolate on touch
+    });
   });
 </script>
 
@@ -296,6 +389,11 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
   .scp-pt .scp-marker { pointer-events: none; transition: stroke 0.08s; }
   .scp-pt.is-hot .scp-marker { stroke: #2c2620; stroke-width: 1.4; opacity: 1; }
   .scp-pt.is-hot .scp-x { stroke: #2c2620; stroke-width: 2; }
+
+  /* regime isolation: hovering a mini plot hides the other regime's dots up top */
+  .scp-wrap.scp-only-sev .scp-pt[data-sev="0"],
+  .scp-wrap.scp-only-nonsev .scp-pt[data-sev="1"],
+  .scp-wrap.scp-only-nonsev .scp-abst-anno { display: none; }
 
   /* hover info box — pinned to the empty top-right of the plot (nothing is both
      highly confident and very wrong, so it never covers data) */
@@ -396,5 +494,43 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
   .scp-cap {
     margin-top: 0.7rem; font-size: 0.82rem; color: rgb(var(--color-muted));
     line-height: 1.5; text-align: center;
+  }
+
+  /* two regime mini-plots */
+  .scp-regimes { margin-top: 1.1rem; }
+  .scp-regimes-head {
+    font-size: 0.8rem; color: rgb(var(--color-muted));
+    text-align: center; margin-bottom: 0.5rem; font-family: Inter, system-ui, sans-serif;
+  }
+  .scp-regimes-head b { color: rgb(var(--color-text)); font-weight: 700; }
+  .scp-mini-row { display: flex; gap: 0.8rem; }
+  .scp-mini {
+    flex: 1; min-width: 0;
+    border: 1px solid rgb(var(--color-border)); border-radius: 8px;
+    background: #fdfaf3; padding: 0.4rem 0.5rem 0.3rem;
+    cursor: pointer; transition: border-color 0.12s, box-shadow 0.12s;
+  }
+  .scp-mini:hover {
+    border-color: #b5562e;
+    box-shadow: 0 3px 14px rgba(40, 34, 26, 0.12);
+  }
+  .scp-mini-title {
+    display: flex; align-items: center; gap: 0.35rem;
+    font-size: 0.82rem; font-weight: 700; color: rgb(var(--color-text));
+    font-family: Inter, system-ui, sans-serif;
+  }
+  .scp-mini-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .scp-mini-sev { background: #D9534F; }
+  .scp-mini-nonsev { background: #7FB069; }
+  .scp-mini-svg { display: block; width: 100%; height: auto; margin-top: 0.1rem; }
+  .scp-mtick { font-size: 9px; fill: #9a9286; font-family: Inter, system-ui, sans-serif; }
+  .scp-mlab { font-size: 9.5px; fill: #8a8279; font-family: Inter, system-ui, sans-serif; }
+  .scp-mini-cap {
+    font-size: 0.72rem; color: rgb(var(--color-muted));
+    font-family: Inter, system-ui, sans-serif; text-align: center; margin-top: 0.1rem;
+  }
+  .scp-mini-cap span { opacity: 0.75; }
+  @media (max-width: 560px) {
+    .scp-mini-row { flex-direction: column; }
   }
 </style>
