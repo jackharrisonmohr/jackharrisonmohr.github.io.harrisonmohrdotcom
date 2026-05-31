@@ -61,7 +61,8 @@ function dotGroup(p: typeof points[number], i: number) {
   const shape = p.a ? "x" : TIER_SHAPE[p.t];
   const fill = MODEL_COLOR[p.m];
   const sev = p.a || p.t === "severe" ? 1 : 0;  // abstentions are all severe
-  return `<g class="scp-pt${p.a ? " scp-abst" : ""}" data-i="${i}" data-sev="${sev}"><circle class="scp-hit" cx="${cx}" cy="${cy}" r="8" fill="transparent"/>${marker(shape, cx, cy, fill)}</g>`;
+  const au = p.au ? ' data-au="1"' : '';        // marks the dot as clickable-for-audio
+  return `<g class="scp-pt${p.a ? " scp-abst" : ""}" data-i="${i}" data-sev="${sev}"${au}><circle class="scp-hit" cx="${cx}" cy="${cy}" r="8" fill="transparent"/>${marker(shape, cx, cy, fill)}</g>`;
 }
 
 // draw dots first, abstentions last (on top), data-i = original index
@@ -400,7 +401,7 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
       audioEl.volume = vol;
       audioEl.play().catch(() => {});
       audioEl.addEventListener("ended", stopAudio);
-      if (barTxt) barTxt.textContent = `${p.au.replace("_attempt1.mp3", "")} · ${p.t} · vol ${Math.round(vol * 100)}%`;
+      if (barTxt) barTxt.textContent = `${p.au.replace(".mp3", "")} · ${p.t} · vol ${Math.round(vol * 100)}%`;
       if (bar) bar.hidden = false;
     }
     wrap.addEventListener("click", (ev) => {
@@ -486,7 +487,8 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
   /* dots */
   .scp-marker { stroke: #fff; stroke-width: 0.45; opacity: 0.82; }
   .scp-x { opacity: 0.92; }
-  .scp-hit { pointer-events: all; cursor: pointer; }
+  .scp-hit { pointer-events: all; cursor: default; }
+  .scp-pt[data-au] .scp-hit { cursor: pointer; }  /* only audio dots look clickable */
   .scp-pt .scp-marker { pointer-events: none; transition: stroke 0.08s; }
   .scp-pt.is-hot .scp-marker { stroke: #2c2620; stroke-width: 1.4; opacity: 1; }
   .scp-pt.is-hot .scp-x { stroke: #2c2620; stroke-width: 2; }
