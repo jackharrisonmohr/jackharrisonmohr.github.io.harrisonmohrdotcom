@@ -13,11 +13,9 @@ import AgentFlowDemo from "../../components/mdx/AgentFlowDemo.astro";
 import SurfaceCerScatter from "../../components/mdx/SurfaceCerScatter.astro";
 
 <Callout type="info" label="TL;DR">
-If your voice agent needs to capture a critical piece of info like an ID, a medication, or a street address, how does it know if it heard correctly? Real-world audio channels are often distorted, and when failure is unacceptable, you need something more robust than just asking for confirmation.
+When a voice agent has to capture a critical value — an ID, a medication, a street address — over a noisy line, how does it know it heard right? The natural answer is the speech-to-text (ASR) model's own **confidence score**. But that score measures how confidently the model decoded *some* transcript, not whether the transcript is *correct* — and it's least reliable on the degraded audio where you need it most. Scaling the model up doesn't rescue you: counterintuitively, the bigger model is *more* likely to commit a wrong answer, because it stops abstaining and its confidence floats up past a threshold tuned for the smaller one.
 
-A natural answer is to use the ASR's confidence. But this is just a heuristic proxy. It can tell you how confidently the ASR decoded a transcript, but not whether the transcript is the right answer to the question your agent asked. And that proxy doesn't fail gracefully: it gets *less* trustworthy on exactly the degraded audio where you need it most, and — counterintuitively — it gets *less* trustworthy as you scale the ASR model up.
-
-I built a targeted benchmark for one critical failure mode: reliable ID capture over degraded audio. Then I upgraded the ASR model in my agent — and my pipeline got *less* safe. On deliberately-unrecoverable audio, wrong commits rose from 0% to 64%. This post is about how I caught that regression, and then what's really going on underneath it: what that confidence number is actually measuring, and why bigger models on worse audio stop knowing when to keep quiet.
+I built a benchmark for one high-stakes failure mode — reliable ID capture over degraded audio — then upgraded the ASR model in my agent. The pipeline got *less* safe: on deliberately-unrecoverable audio, wrong commits rose from **0% to 64%**. This post is how I caught that regression and what's underneath it — what the confidence number actually measures, and why bigger models on worse audio stop knowing when to keep quiet.
 </Callout>
 
 
@@ -37,7 +35,7 @@ The catch is that this number is measuring the wrong thing. Read the definition 
 
 The surprising part in my benchmark was that this failure got *worse* as I upgraded Whisper. Larger models captured more recoverable IDs, as expected. But on the deliberately-unrecoverable audio, they also produced more confident wrong transcripts that sailed through the commit gate. The result was a model upgrade that looked better on capture rate while becoming less safe on exactly the cases where the right answer was "I can't hear this."
 
-I want to be precise about the claim, because there's a lazy version and a real one. The lazy version is "bigger Whisper hallucinates more." The real version, which the data below actually supports, is two-fold: bigger models are **more confident in their wrong answers**, *and* they **stop abstaining** — they lose the one safe behavior available on unrecoverable audio. A single confidence threshold is supposed to be the guardrail against both, and the second half of this post is about why it can't be.
+I want to be precise about the claim, because there's a lazy version and a real one. The lazy version is "bigger Whisper hallucinates more." The real version, which the data below actually supports, is two-fold: bigger models **stop abstaining** on unrecoverable audio — they lose the one move that fails safe — *and* their whole confidence scale **shifts upward**, so a threshold tuned on a smaller model lets more of those non-abstained wrong answers through. A single confidence threshold is supposed to guard against exactly this, and the second half of this post is about why it can't.
 
 ## The benchmark
 
@@ -231,7 +229,7 @@ So the dots that clear a confidence gate are overwhelmingly read-backs, not fabr
 
 Step back and the mechanism is almost obvious. `exp(avg_logprob)` rewards fluent, self-consistent token sequences — that's all a language model's probability really tracks. A bigger model has a stronger language prior, so when the acoustic evidence turns to mush, it has more to fall back on. It doesn't stall; it generates a clean, well-formed, ID-shaped string of digits and letters that it is genuinely "sure" of *as a piece of language* — even though that string has nothing to do with what the caller said.
 
-The confidence isn't a bug in the narrow sense. It's real. It's just confidence in a plausible fabrication. The smaller model, with a weaker prior, is more likely to throw up its hands and emit nothing — which is exactly the behavior you wanted. Scaling the model up makes it a better *language* model on degraded input *and strips its instinct to abstain* — and it's the second of those that turns it into a more dangerous *transcriber*.
+The confidence isn't a bug in the narrow sense. It's real. It's just confidence in a plausible, wrong ID. The smaller model, with a weaker prior, is more likely to throw up its hands and emit nothing — which is exactly the behavior you wanted. Scaling the model up makes it a better *language* model on degraded input *and strips its instinct to abstain* — and it's the second of those that turns it into a more dangerous *transcriber*.
 
 Here's that exact mechanism on one severe fixture (`sev_098`, canonical `117PS896`). Same audio, same policy; only the model changes:
 
@@ -272,7 +270,7 @@ Here's that exact mechanism on one severe fixture (`sev_098`, canonical `117PS89
   ]}
 />
 
-And the failure mode generalizes. Across the severe and heavy buckets combined, roughly **one in five** transcriptions is *confidently very wrong* — it clears a 0.5 confidence bar while the raw transcript is more wrong than right. Those are precisely the cases a confidence guard exists to catch, and a confidence guard is structurally blind to them. (Not every hallucination is dangerous, to be clear — plenty are low-confidence and get escalated, which is the system working. The dangerous ones are the fluent, confident, ID-shaped fabrications, and bigger models make more of them.)
+And the failure mode generalizes. Across the severe and heavy buckets combined, roughly **one in five** transcriptions is *confidently very wrong* — it clears a 0.5 confidence bar while the raw transcript is more wrong than right. Those are precisely the cases a confidence guard exists to catch, and a confidence guard is structurally blind to them. (Not every hallucination is dangerous, to be clear — plenty are low-confidence and get escalated, which is the system working. The dangerous ones are the confident, ID-shaped read-backs — a plausible *wrong* identifier, not lurid prose — and bigger models make more of them.)
 
 ## What would be a better way than threshold recalibration?
 
