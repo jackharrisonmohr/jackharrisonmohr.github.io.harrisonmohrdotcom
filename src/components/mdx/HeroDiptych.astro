@@ -65,9 +65,8 @@ const gradId = "hd-grad";
       <span class="hd-np-ic">▶</span><span class="hd-np-txt"></span>
       <button class="hd-np-stop" type="button" aria-label="Stop audio">■</button>
     </div>
+    <div class="hd-readout" aria-live="polite"></div>
   </div>
-
-  <div class="hd-readout"><span class="hd-hint">Hover a row to read what the model heard →</span></div>
 
   <div class="hd-foot">
     <span class="hd-legbar">
@@ -120,8 +119,8 @@ const gradId = "hd-grad";
     const rows = root.querySelector(".hd-rows");
     const ro = root.querySelector(".hd-readout");
     if (!wrap || !rows || !ro) return;
-    const idle = ro.innerHTML;
     let hot = null;
+    function closeReadout() { ro.classList.remove("is-open"); setHot(null); }
 
     // click a row to hear its clip (one per case, attenuated per tier)
     const np = root.querySelector(".hd-nowplaying");
@@ -153,11 +152,14 @@ const gradId = "hd-grad";
     }
     function update(ev) {
       const g = ev.target.closest && ev.target.closest(".hd-row");
-      if (g) { ro.innerHTML = roHtml(POINTS[+g.dataset.i]); setHot(g); }
+      if (g) { ro.innerHTML = roHtml(POINTS[+g.dataset.i]); ro.classList.add("is-open"); setHot(g); }
     }
     wrap.addEventListener("pointermove", update);
     wrap.addEventListener("pointerdown", update);
-    wrap.addEventListener("pointerleave", () => { ro.innerHTML = idle; setHot(null); });
+    // Mouse: close when the cursor leaves the graphic. Touch: keep the readout
+    // up until the next tap outside (a tap fires pointerleave immediately).
+    wrap.addEventListener("pointerleave", (ev) => { if (ev.pointerType !== "touch") closeReadout(); });
+    document.addEventListener("pointerdown", (ev) => { if (!wrap.contains(ev.target)) closeReadout(); });
     wrap.addEventListener("click", (ev) => {
       const g = ev.target.closest && ev.target.closest(".hd-row");
       if (g) play(POINTS[+g.dataset.i]);
@@ -177,13 +179,27 @@ const gradId = "hd-grad";
   .hd-rows.dim .hd-row:not(.is-hot) { opacity: 0.28; transition: opacity 0.08s; }
   .hd-row.is-hot rect:not(.hd-hit) { stroke: #2c2620; stroke-width: 0.6; }
 
-  /* readout */
+  /* readout — hidden until a row is hovered. On wide screens it lives in the
+     right gutter; on narrow screens it drops just below the graphic, overlaying
+     the following text so the body copy never jumps. */
   .hd-readout {
-    min-height: 70px; margin-top: 0.7rem; padding: 0.55rem 0.7rem;
+    position: absolute; z-index: 20;
+    top: 100%; left: 0; right: 0; margin-top: 0.55rem;
+    padding: 0.55rem 0.7rem;
     border: 1px solid rgb(var(--color-border)); border-radius: 8px; background: #fffdf8;
+    box-shadow: 0 10px 28px rgba(40, 34, 26, 0.14);
     font-family: Inter, system-ui, sans-serif;
+    opacity: 0; visibility: hidden; transform: translateY(4px);
+    transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
   }
-  .hd-hint { color: rgb(var(--color-muted)); font-size: 0.85rem; }
+  .hd-readout.is-open { opacity: 1; visibility: visible; transform: none; }
+
+  @media (min-width: 1300px) {
+    .hd-readout {
+      top: 0; left: 100%; right: auto; margin-top: 0; margin-left: 0.9rem;
+      width: clamp(185px, calc((100vw - 56rem) / 2 - 0.5rem), 300px);
+    }
+  }
   .hd-ro-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.55rem; margin-bottom: 0.35rem; }
   .hd-chip { color: #fff; font-size: 0.72rem; font-weight: 700; padding: 0.06rem 0.45rem; border-radius: 999px; text-transform: capitalize; }
   .hd-stat { font-size: 0.78rem; color: rgb(var(--color-muted)); }
