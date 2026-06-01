@@ -1,6 +1,6 @@
 ---
 title: "How Does Your Voice Agent Know When It Mishears?"
-subtitle: "Building a voice-agent benchmark for degraded audio scenarios."
+subtitle: "The fallibility of ASR confidence as a predictor of correctness."
 description: "A model upgrade made my voice-agent pipeline less safe. The thread tying it together was a confidence score that measures the wrong thing — and measures it worse exactly when it matters."
 date: 2026-05-29
 draft: true
@@ -85,7 +85,7 @@ Some of the complexities this setup removes:
 
 It's also worth pointing out that the purpose of this benchmark is not to assess frontier capabilities, but rather to catch regressions. The current generation of agents can easily perform well on it already.
 
-## Catching a regression
+## The regression
 
 I ran my agent on the benchmark with four different Whisper ASR model sizes. When I initially swapped them in without tuning the escalation policy threshold, accuracy increased monotonically while wrong-commit rates on the ~impossible 'severe' bucket tasks rose from 0% in tiny.en up to 64% in large-v3 😬.
 
@@ -105,7 +105,7 @@ Let's walk through the layers of how you might miss it in practice:
 5. **Only looking at the aggregate wrong-commit rate.** Check out the amber line in the chart above. Overall the escalation behavior doesn't look so bad. But when you look specifically at the impossible cases, it's clear that the large model has *totally lost the plot*.
 6. **Calibrating the model's escalation policy to this benchmark.** The distribution of severe audio samples is arbitrary and has no relation to any actual production situation. Below I do an F1 sweep to find the 'optimal' for each model. But the calibration settings only work for this distribution of fixtures.
 
-## The band-aid: recalibrate per model
+## The band-aid
 
 Once I caught the bug I found new thresholds for each model by doing a threshold sweep and finding the optimal F1 score for each model (since presumably we want a good balance of recall and precision). Remember that what we mean here by a true positive is a genuinely impossible case, a true negative is a genuinely tractable case, a false positive is a tractable case you thought was impossible, and a false negative is an impossible case you thought was tractable. That produced the following nice-looking chart (remember that you'd want to grab data from your actual domain to see how frequently adversarial cases occur in practice):
 
@@ -133,30 +133,30 @@ Post-calibration, better models indeed performed better on both capture accuracy
 | **medium recal** | **0.65** | **84%** | **10%** | **0.93** |
 | **large recal** | **0.75** | **92%** | **6%** | **0.93** |
 
-## So what's actually going on with that threshold drift?
+## A closer look at ASR confidence
 
-Recalibration works, but it's a band-aid. For one, the "right" threshold isn't a property of the task. it moved from 0.55 to 0.75 just because I swapped the model. A confidence of 0.7 evidently means something different coming out of large-v3 than coming out of tiny.en, and something different again depending on how bad the audio is. But beyond this, when you look more carefully, ASR confdence just isn't well equipped as a standalone signal for informing correct escalation behavior. So before reaching for a better calibration trick, it's worth asking the more basic question: **what is this number actually measuring, why does its meaning slide around, and where does it fall short?**
+Threshold recalibration restores the Pareto frontier but it turns out ASR confidence has issues that go a bit deeper than our quick-fix. So before reaching for a better calibration trick, it's worth asking: **what is this number actually measuring, why does its meaning slide around, and where does it fall short?**
 
-### Where does ASR confidence come from?
-Whisper is an autoregressive encoder–decoder Transformer. The encoder turns the audio's log-mel spectrogram into a latent sequence. The decoder is a language model that emits text tokens one at a time, each conditioned on (a) the audio, via cross-attention, and (b) the tokens it's already emitted, via causal self-attention. At every step it produces a softmax over the entire ~51.9k-token BPE vocabulary and picks one. So it's really next-token prediction, like an LLM, except the difference from a text-only LLM is the extra cross-attention into the audio.
+### What does ASR confidence mean, really?
+Whisper is an autoregressive encoder–decoder Transformer. The encoder turns the audio's log-mel spectrogram into a latent sequence. The decoder is a language model that emits text tokens one at a time, each conditioned on (a) the audio, via cross-attention, and (b) the tokens it's already emitted, via causal self-attention. At every step it produces a softmax over the entire ~51.9k-token byte-pair-encoded vocabulary and picks one. So it's really next-token prediction, like an LLM, except the difference from a text-only LLM is the extra cross-attention into the audio.
 
-And `exp(avg_logprob)` is *literally* the geometric mean of those per-step probabilities: `avg_logprob` is the mean of `log P(chosen token)` over the emitted tokens, so `exp(avg_logprob)` is the typical probability the decoder assigned to each word it committed to. Another way of putting this is it's just **inverse perplexity**, where perplexity is `exp(−avg_logprob)`, the standard measure of how surprised a language model is by a string. So the "confidence" the agent gates on is a *fluency* score, not a correctness one.[^6] High means it concentrated mass on what it emitted at each step (decisive); low means it spread its bets. It measures *decisiveness*, not fidelity to the audio.
+And `exp(avg_logprob)` is *literally* the geometric mean of those per-step probabilities: `avg_logprob` is the mean of `log P(chosen token)` over the emitted tokens, so `exp(avg_logprob)` is the typical probability the decoder assigned to each word it committed to. Another way of putting this is it's just **inverse perplexity**, where perplexity is `exp(−avg_logprob)`, the standard measure of how surprised a language model is by a string. So high confidence means the model concentrated mass on what it emitted at each step (decisive) and low confidence means it spread its bets. It measures *decisiveness*, not just fidelity to the audio.[^6]
 
-Here is the classic sequence-of-next-token-predictions pic you've seen from LLM explainers. But here it's whisper-tiny.en decoding a spoken ID one token at a time on clean audio (top) and on severe audio (bottom). Each panel is the model's probability distribution over the *next* token, top five candidates; the coloured bar is the token it actually committed to and fed back in for the following step.[^5]
+To make sure we're clear on the setup here the following is the classic sequence-of-next-token-predictions pic you've seen from LLM explainers. But here it's whisper-tiny.en decoding a spoken ID one token at a time on clean audio (top) and on severe audio (bottom). Each panel is the model's probability distribution over the *next* token, top five candidates. The colored bar is the token it actually committed.[^5]
 
 <Figure
   src="/images/asr-calibration/fig_nexttoken_filmstrip.png"
-  alt="Twelve small horizontal bar charts in two rows. The top row (clean audio) shows whisper-tiny.en's next-token distribution at six consecutive decoding steps, each dominated by a single near-certain token spelling out an ID. The bottom row (severe audio) shows the distribution smeared across several low-probability candidates at each step."
-  caption="One decoding step per panel. On clean audio the distribution collapses onto a single token every step (a high geometric mean). On severe audio the model is guessing — the first token spreads across 'You / Welcome / Oh / This / you', none above a few percent — yet the later steps sharpen again as its language prior carries a fluent sentence forward."
+  alt="Image showing next-token prediction in Whisper. On the clean audio (top) it makes decisive choices. On the severely distorted autio (bottom) it is much less certain."
+  caption="Next-token prediction in Whisper. On the clean audio (top) it makes decisive choices. On the severely distorted autio (bottom) it is much less certain."
 />
 
-On the clean line the distribution collapses onto one token at every step — `R → as → in → Romeo → …`, each a near-certain spike, which is exactly what a confidence near 1.0 looks like up close. On the severe line the same model is guessing: the very first token splits its mass across `You / Welcome / Oh / This / you`, nothing above a few percent. But watch what happens after it commits to "You": the later steps sharpen right back up ("know what I'm going to…"), because once a fluent English sentence is underway it is easy to continue *as language*, regardless of whether it matches the audio. The confidence partially recovers, but on a complete fabrication.
+On the clean line the distribution collapses onto one token at every step — `R → as → in → Romeo → …`, each a near-certain spike, which is exactly what a confidence near 1.0 looks like up close. On the severe line the same model is guessing: the very first token splits its mass across `You / Welcome / Oh / This / you`, nothing above a few percent. But watch what happens after it commits to "You": the later steps sharpen right back up ("know what I'm going to…"). My strong hypothesis for what's happening here is that once a fluent English sentence is underway it's easy to continue *as language*, regardless of whether it matches the audio. The confidence partially recovers, but on a hallucination.
 
-So as I've been dwelling on, `exp(avg_logprob)` measures how sure the decoder was about the tokens it emitted, not whether those tokens are correct. But to see how far those two things drift apart we need to go deeper than the benchmark's own scoring and measure "wrongness" more honestly.
+So indeed to recap, `exp(avg_logprob)` measures how sure the decoder was about the tokens it emitted, not whether those tokens are correct. To get a sense for how those two things drift apart we need to measure the correctness of the model's token predictions more granularly. 
 
-### First, measuring "wrong" honestly
+### Character Error Rate as a proxy for per-token correctness
 
-To ask whether confidence tracks correctness, I need the *other* axis: a single number per transcription for how wrong it actually was, that I can plot against the model's confidence. "Right vs. wrong" is too blunt — a transcript that drops one digit and one that invents a whole sentence are both "wrong," but they are not the same failure, and the question is precisely whether confidence falls as the wrongness grows. Character error rate gives that graded measure.
+To ask whether confidence tracks correctness, I need the *other* axis: a single number per transcription for how wrong it actually was, that I can plot against the model's confidence. "Right vs. wrong" ID capture is too blunt because a transcript that drops one digit and one that invents a whole sentence are both "wrong," but they're not the same failure. What we intuitively want of course is something like the overall tendency for whether the model's per-token predictions were per-token correct: **Does confidence fall as the wrongness grows?** Character error rate (CER) is a decent starting point.
 
 CER is just edit distance over the length of the reference:
 
@@ -166,28 +166,42 @@ CER = levenshtein(reference, transcript) / length(reference)
 
 The [Levenshtein](https://en.wikipedia.org/wiki/Levenshtein_distance) (edit) distance is the minimum number of single-character insertions, deletions, or substitutions needed to turn one string into the other. Identical strings score 0; the more the transcript has to be rewritten to match what was said, the higher it climbs. Because the denominator is the *reference* length, a transcript longer than the truth (like a fabricated sentence standing in for a short ID) can score well above 1.0.
 
-What we intuitively want of course is something like the overall tendency for whether the model's per-token predictions were per-token correct. CER is itself a flawed proxy for this though. The *reference you compare against* changes the conclusion completely. My agent's committed value is the post-parser ID string, and if you score *that* against the canonical ID, a wild hallucination collapses to a near-empty string: a one-character slip and a twenty-word fabrication both land at a CER of about 1.0. The metric saturates where the behavior gets interesting. It literally can't tell you *how* wrong a confident hallucination is.
+Calculating CER requires a bit of thoughtfulness. The *reference you compare against* changes the conclusion completely. My agent's committed value is the post-parser ID string, and if you score *that* against the canonical ID, a wild hallucination collapses to a near-empty string: a one-character slip and a twenty-word fabrication both land at a CER of about 1.0 (because e.g. the string 'a as in alpha' becomes 'a'). The metric saturates where the behavior gets interesting. It can't tell you *how* wrong a confident hallucination is. So instead I score the *raw transcript* against what was actually *spoken* and normalize away formatting that isn't a mishearing.
 
-So instead I score the *raw transcript* against what was actually *spoken*, with no cap. The one bit of care: normalize away formatting that isn't a mishearing — lowercase, drop spaces and punctuation, treat "five" and "5" as identical — while keeping the actual words, so a genuine acoustic slip like hearing "tango" as "mango" still counts. A correct hearing then scores ≈0 however it was spelled out, and a hallucination is free to be as wrong as it really is.
-
-A worked example. The rep says *"S as in sierra, X-ray, 1, 1, 8, 5"* and Whisper returns *"S is in Sierra, X-ray, 118.5."* Normalized, those become
+Here's an example: *"S as in sierra, X-ray, 1, 1, 8, 5"* and Whisper returns *"S is in Sierra, X-ray, 118.5."* Normalized, those become
 
 ```
 ref: sasinsierraxray1185   (what was spoken)
 hyp: sisinsierraxray1185   (what Whisper heard)
 ```
 
-— one substitution (the "a" of "as" became the "i" of "is") over a 19-character reference, so CER = 1/19 ≈ **0.05**: a near-perfect hearing, and you can see exactly why. Now contrast a severe-audio hallucination — the rep spells out a short ID and Whisper returns *"Hello, welcome to this channel. Real fast, real fast…"* — which shares almost nothing with what was said, so the edit distance is essentially the entire fabricated sentence and the CER lands several times higher (up to ≈4× across this benchmark).[^7]
+In this example, there is one needed substitution (the "a" of "as" became the "i" of "is") over a 19-character reference, so CER = 1/19 ≈ **0.05**. Now contrast a severe-audio hallucination. Whisper hallucinates *"Hello, welcome to this channel. Real fast, real fast…"* — which shares almost nothing with what was said, so the edit distance is essentially the entire fabricated sentence and the CER is several times higher (up to ≈4× across this benchmark).[^7]
 
-Plot every transcription that way — raw, uncapped error against the model's confidence — and the picture stops looking like a calibration curve and starts looking like weather.
+## When confidence diverges from correctness
+Okay, having established how we got the CER values, let's compare them to ASR confidence for each test case. The following dot plot shows every transcription with the model's confidence on the x-axis and the CER on the y-axis. This gives us some clearer intuition for how ASR confidence corresponds to correctness. You can hover on dots to see the transcript and click to listen.
 
 <SurfaceCerScatter />
 
-### Confidence is a cloud, not a line
+### Confidence behaves differently on unrecoverable audio
 
-If you pool every transcription together, confidence and error are negatively correlated at about ρ = −0.83 (−0.81 with the abstentions set aside), which sounds reassuringly strong. But that number is inflated by mixing conditions. It mostly reflects that clean audio lives in one corner (high confidence, low error) and severe audio in another (low confidence, high error). Pooling the two manufactures a correlation that exists *between* conditions more than *within* any one of them — and at inference time you are always inside a single condition, never the pool.
+Studying this graph gives an intuition for how ASR confidence behaves differently based on model size and distortion level. Depending on the sort of audio your voice agent has to deal with, this can make ASR confidence an imperfect predictor of correctness, and ultimately, a noisy signal for an escalation classifier. 
 
-Look within a single bucket — the only view that matches what your agent faces in the moment — and the relationship loosens and turns uneven. Pooled by tier it runs from about −0.34 (light, severe) to −0.75 (heavy); slice it finer into individual model×bucket cells and the median is just −0.43, with cells scattering from −0.72 all the way to slightly *positive*. So confidence is a soft, unreliable hint about correctness, not a tight proxy — and the rest of this section is about the three different ways that hint deteriorates as the channel degrades.
+If you pool every transcription together, confidence and CER are negatively correlated at about ρ = −0.83 (−0.81 with the abstentions set aside)[^8]. Sounds pretty good. But in practice, not so much. It mostly reflects the fact that clean audio lives in one corner (high confidence, low error) and severe audio in another (low confidence, high error). Pooling the two manufactures a correlation that exists _between_ conditions more than _within_ any one of them. But at inference time you are always inside a single condition.
+
+You can see these two regimes disentangled in the two mini-graphs above. In the non-severe audio graph (right), ASR confidence is a pretty good predictor of correctness. If you inspect the lower confidence dots you see examples where the model had mis-transcribed a few characters but got the general gist of the ID. In the severely distorted cases (left), all models are wrong 100% of the time. Sometimes the model's confidence appears to be propped up by a hallucinated sentence. Other times, it hears a few characters correctly, but mostly misses it. 
+
+Unfortunately the ASR confidence numbers for this unrecoverable regime drift into the confidence region of the graph where we have real signal about clean audio. Consequently, a confidence above 0.55 for recoverable audio means 'probably fine' across all models, but for unrecoverable audio it means a confident mishearing. You can't find a perfect escalation threshold because confidence on moderately distorted overlaps with confidence on unrecoverable audio. 
+
+
+### Confidence behaves differently for different models
+This whole post was kicked off by the observation that larger Whisper models have overall higher confidence, which motivated the threshold recalibration.
+The behavior differences between models are more nuanced than simply 'larger models are more confident'.
+- The confidence difference is uneven between distortion levels. On clean audio large is much more confident than tiny, while less so for severe audio.
+- A hypothesis for the mechanism here might be that larger models hallucinate more confidently. But confidence about hallucinated transcriptions on severe audio is roughly similar across models.
+- the real confidence shift in the severe bucket is not on fully hallucinated audio but on extremely garbled audio (ie large-v3's confidence *does* negatively correlate with CER!)
+- smaller models abstain more. 
+- Bizarrely, Whisper Large does the best on severely distorted audio in terms of both CER and the correlation between CER and confidence. But that ends up just creating more trouble for us if our goal is principally to distinguish between correct vs incorrect. 
+
 
 ### Three things break, all at once
 
@@ -275,7 +289,7 @@ Here's that exact mechanism on one severe fixture (`sev_098`, canonical `117PS89
 
 And the failure mode generalizes. Across the severe and heavy buckets combined, roughly **one in five** transcriptions is *confidently very wrong* — it clears a 0.5 confidence bar while the raw transcript is more wrong than right. Those are precisely the cases a confidence guard exists to catch, and a confidence guard is structurally blind to them. (Not every hallucination is dangerous, to be clear — plenty are low-confidence and get escalated, which is the system working. The dangerous ones are the confident, ID-shaped read-backs — a plausible *wrong* identifier, not lurid prose — and bigger models make more of them.)
 
-## What would be a better way than threshold recalibration?
+## The alternatives
 
 Threshold recalibration is the first fix, not the final design. It works in this benchmark because it changes the policy boundary: more questionable transcripts get confirmed instead of immediately committed. That's useful, but it is still using a signal that measures token-certainty as if it measured correctness — and we've just seen that signal degrade in three different directions on the audio you care most about.
 
@@ -328,3 +342,5 @@ I'm the founding engineer at MakeTimeFlow building production AI agents and goin
 [^6]: Multiplying per-token probabilities together might smell like an independence assumption, but it isn't one. By the chain rule, $P(t_1 \dots t_T \mid \text{audio}) = \prod_{t} P(t_t \mid t_{<t},\, \text{audio})$ exactly — and the decoder parameterizes precisely those conditionals, so the product is the true joint probability of the sequence; the dependence between tokens is absorbed *inside* each factor, not assumed away. That conditioning is also *one* way a wrong transcript can stay confident: because each token is conditioned on the ones already emitted, the later factors can stay high just because the sentence is fluent English (the filmstrip above shows this happening). I'll stop short of calling it *the* mechanism, though — in this benchmark the most confident errors are more often garbled ID read-backs than fluent fabrications, so how much this particular effect drives the confident hallucinations is something I haven't actually pinned down.
 
 [^7]: One wrinkle worth owning: because the reference is the full spelled-out read-back (`R as in romeo, E as in echo, …` normalizes to ~50 characters, not the 9-character ID), a hallucination that is *shorter* than that read-back can score *below* 1.0. A whisper-medium clip on severe returned a flat "Thank you for watching and see you next time" against an 11-character ID and landed at surface CER 0.83 — fully wrong, but the long reference in the denominator pulls the ratio under 1.0. So surface CER is reliable for *ranking* how wrong things are, but its absolute scale is compressed, and the dashed 1.0 line on the plot is a rough guide, not a hard hallucination cutoff. (Scored against the bare ID instead, that same clip is 3.6.)
+
+[^8]: Sometimes the model makes no prediction when it's too distorted, especially the smallest model.

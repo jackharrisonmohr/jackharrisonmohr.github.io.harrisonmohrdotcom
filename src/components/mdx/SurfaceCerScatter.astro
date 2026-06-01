@@ -180,8 +180,8 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
 
 <figure class="scp my-8 not-prose">
   <div class="scp-head">
-    <div class="scp-title">ASR confidence vs surface character-error-rate</div>
-    <div class="scp-sub">Every transcription, one dot — raw transcript scored against what was actually spoken (formatting neutralized, acoustic confusions kept). Hover a dot for its data; <b>click to hear the audio clip</b>.</div>
+    <div class="scp-title">ASR confidence vs character-error-rate</div>
+    <div class="scp-sub">click a dot to hear the audio clip.</div>
   </div>
 
   <div class="scp-wrap">
@@ -210,7 +210,7 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
         <text x={M.l - 7} y={ypx(t) + 3.5} class="scp-tick" text-anchor="end">{ax(t)}</text>
       ))}
       <text x={M.l + PW / 2} y={H - 6} class="scp-axtitle" text-anchor="middle">ASR confidence  exp(avg_logprob)  →  more confident</text>
-      <text transform={`translate(13 ${M.t + PH / 2}) rotate(-90)`} class="scp-axtitle" text-anchor="middle">surface CER  —  'tango' ≠ 'mango'  (clamped to {ax(YMAX)})</text>
+      <text transform={`translate(13 ${M.t + PH / 2}) rotate(-90)`} class="scp-axtitle" text-anchor="middle">character error rate (CER)</text>
 
       <!-- rho + clamp annotation -->
       <text x={W - M.r} y={M.t - 30} class="scp-rho" text-anchor="end">ρ(conf, surface CER) = {meta.rho_all}<tspan class="scp-rho-dim">   |   excl. abstentions {meta.rho_excl}</tspan></text>
@@ -254,10 +254,8 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
   </div>
 
   <figcaption class="scp-cap">
-    {meta.n} transcriptions across four Whisper sizes and five distortion tiers.
-    Surface CER is uncapped (true max {meta.emax}×) but clamped to {ax(YMAX)} for display.
-    The black line is the <strong>median</strong> surface CER within each 0.1-wide confidence bin (bins with ≥4 points) — a robust summary that ignores the hallucination tail, not a fitted regression.
-    Confidence tracks error only moderately (ρ = {meta.rho_all}) — a soft hint, not a reliable mishearing detector.
+    ASR confidence vs CER of {meta.n} transcriptions across four Whisper sizes and five distortion tiers.
+    The black line is the <strong>median</strong> surface CER within each 0.1-wide confidence bin (bins with ≥4 points).
   </figcaption>
 
   <!-- two regimes: severe vs the rest. hover one to isolate it in the plot above -->
