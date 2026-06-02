@@ -291,7 +291,9 @@ And the failure mode generalizes. Across the severe and heavy buckets combined, 
 
 ## The alternatives
 
-Threshold recalibration is the first fix, not the final design. It works in this benchmark because it changes the policy boundary: more questionable transcripts get confirmed instead of immediately committed. That's useful, but it is still using a signal that measures token-certainty as if it measured correctness — and we've just seen that signal degrade in three different directions on the audio you care most about.
+In short, if your voice agent needs to tracnscribe critical info over possibly distorted audio channels, then ASR confidence is probably not a complete solution to inform your escalation policy.
+
+We can look at the
 
 A production agent should combine several signals instead of leaning on the one:
 
@@ -315,7 +317,7 @@ When I built the benchmark, I didn't predict the model-swap miscalibration bug. 
 
 By being clear on the product-level implications of different failure modes, we can specify what it means for our agent to be shippable. In the case of my benchmark, one presumably really cares not just about transcription accuracy but also about generally preventing wrong transcription. It's good to be clear about that from the start so whatever unexpected bugs arise will be surfaced by your evals in the dimensions you care about.
 
-Finally, as many wise people have said: "As George Box once said, 'all models are wrong, but some are useful.'" By understanding how our proxy metric diverges from reality, we stand a better chance at identifying root causes of our agents' aberrant behavior. By reasoning through why the map is different from the territory we can make map-v2 more robust. Otherwise we resort to band-aid solutions.
+Additionally, by understanding how a heuristic diverges from reality, we stand a better chance at identifying root causes of our agents' aberrant behavior. And instead of just throwing the kitchen sink of common techniques at the problem, if we can get an intuition about what's going on by actually looking at *specific examples* in the data, it's often possible to apply a more appropriate solution. Otherwise we resort to band-aid solutions.
 
 In conclusion then, if you want your agent to know when it mishears, make sure you reason through *how* the agent 'knows'. Don't just be like, "was the ASR confident?" Given the audio, transcript, task context, and downstream cost, is there enough evidence to commit this field? And if nothing else, make sure your evals measure what you care about, so the bugs you didn't predict still pop up somewhere you're looking.
 
@@ -341,6 +343,6 @@ I'm the founding engineer at MakeTimeFlow building production AI agents and goin
 
 [^6]: Multiplying per-token probabilities together might smell like an independence assumption, but it isn't one. By the chain rule, $P(t_1 \dots t_T \mid \text{audio}) = \prod_{t} P(t_t \mid t_{<t},\, \text{audio})$ exactly — and the decoder parameterizes precisely those conditionals, so the product is the true joint probability of the sequence; the dependence between tokens is absorbed *inside* each factor, not assumed away. That conditioning is also *one* way a wrong transcript can stay confident: because each token is conditioned on the ones already emitted, the later factors can stay high just because the sentence is fluent English (the filmstrip above shows this happening). I'll stop short of calling it *the* mechanism, though — in this benchmark the most confident errors are more often garbled ID read-backs than fluent fabrications, so how much this particular effect drives the confident hallucinations is something I haven't actually pinned down.
 
-[^7]: One wrinkle worth owning: because the reference is the full spelled-out read-back (`R as in romeo, E as in echo, …` normalizes to ~50 characters, not the 9-character ID), a hallucination that is *shorter* than that read-back can score *below* 1.0. A whisper-medium clip on severe returned a flat "Thank you for watching and see you next time" against an 11-character ID and landed at surface CER 0.83 — fully wrong, but the long reference in the denominator pulls the ratio under 1.0. So surface CER is reliable for *ranking* how wrong things are, but its absolute scale is compressed, and the dashed 1.0 line on the plot is a rough guide, not a hard hallucination cutoff. (Scored against the bare ID instead, that same clip is 3.6.)
+[^7]: Because the denominator in our CER metric is the full spelled-out read-back (e.g. `R as in romeo, E as in echo, …` which normalizes to ~50 characters), a hallucination that is *shorter* than that read-back can score *below* 1.0. A whisper-medium clip on severe returned "Thank you for watching and see you next time" against an 11-character ID and landed at CER 0.83. So it was fully wrong, but the long reference in the denominator pulls the ratio under 1.0. Scored against the bare ID instead, that same clip is 3.6. So the CER is reliable for *ranking* how wrong things are, but its absolute scale is compressed. 
 
 [^8]: Sometimes the model makes no prediction when it's too distorted, especially the smallest model.
