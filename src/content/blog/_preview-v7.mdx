@@ -194,67 +194,23 @@ Unfortunately the ASR confidence numbers for this unrecoverable regime drift int
 
 
 ### Confidence behaves differently for different models
-This whole post was kicked off by the observation that larger Whisper models have overall higher confidence, which motivated the threshold recalibration.
-The behavior differences between models are more nuanced than simply 'larger models are more confident'.
-- The confidence difference is uneven between distortion levels. On clean audio large is much more confident than tiny, while less so for severe audio.
-- A hypothesis for the mechanism here might be that larger models hallucinate more confidently. But confidence about hallucinated transcriptions on severe audio is roughly similar across models.
-- the real confidence shift in the severe bucket is not on fully hallucinated audio but on extremely garbled audio (ie large-v3's confidence *does* negatively correlate with CER!)
-- smaller models abstain more. 
-- Bizarrely, Whisper Large does the best on severely distorted audio in terms of both CER and the correlation between CER and confidence. But that ends up just creating more trouble for us if our goal is principally to distinguish between correct vs incorrect. 
+This whole post was kicked off by the observation that larger Whisper models have overall higher confidence (remember the regression we caught?). But the changes in ASR confidence between models is more nuanced than just "bigger model, more confident".
 
+First, the gap between models is huge on clean audio and almost gone on severe. On clean audio whisper-large sits at a median confidence of **0.92** against tiny's **0.67**. On severe audio that gap nearly closes: **0.53** vs **0.47**. So the upward shift that moved large's threshold came mostly from large getting more confident *where it's right*, not from getting uniformly louder everywhere. 
 
-### Three things break, all at once
+The hypothesis that "bigger models just believe their hallucinations more" turns out to be wrong on severe audio. Look only at the fluent, off-topic fabrications (the "thanks for watching, see you next time" kind) and whisper-large is not really surer of them than the small models. Its median confidence on fabrications is **0.45**, right in the same 0.40–0.47 band as everyone else. So Large is not more deluded about its hallucinations.
 
-**1. The number stops meaning the same thing.** This is what "threshold drift" really is. It is not that the best cutoff wanders randomly; it's that the entire mapping from confidence to correctness slides as the audio worsens. A confidence of 0.55 means "probably fine" on clean audio and "confident misfire" on severe audio. And you can't correct for the slide, because the variable you'd need to condition on — how degraded this particular call is — is precisely what the bad audio prevents you from knowing.
+What actually shifts is confidence on garbled read-backs where the transcripts are still letters and digits. Large produces far more of them (20 of its 39 severe transcripts, versus zero for tiny), and they are the confident population: a median **0.62** for large's read-backs against **0.45** for its fabrications. A likely reason why they are more confident is because They are partly correct: large's garbled read-backs have a median raw CER of **1.1**, while its hallucinations have a median of **3.3**. Tellingly, large is the *only* model whose confidence meaningfully correlates with error on severe audio (ρ = **−0.54**, the strongest of the four). Within its own outputs, the surer ones really are less wrong. This is also the half that bites: a fluent fabrication does not parse as an ID and gets rejected, but a confident wrong read-back parses cleanly and commits. The failure that survives to production is not invented prose where the model should have stayed silent — it is a plausible *wrong* identifier, and the bigger model makes more of them.
 
-**2. Right and wrong stop being separable.** On clean audio, correct transcriptions cluster high and the rare wrong one sits lower, so a threshold can split them. As distortion rises the two distributions slide together until they overlap almost entirely. The sharpest way to say it: ask how well confidence can *rank* a correct transcription above a wrong one (its AUROC as a detector). On clean audio it's a decent classifier. By the severe bucket the question is undefined — there are *zero* correct transcriptions, from any model, for confidence to surface. The signal you'd threshold on has nothing left to find.
+Meanwhile the smaller models (particularly Tiny) more frequently abstain. On severe audio whisper-tiny returns an empty transcript **58%** of the time. It just heard noise. Large abstains 0% of the time (small and medium sit in between, around 10–13%). That single behavioural difference of emit-nothing versus always-emit-something accounts for a lot of the regression: where tiny stays silent and escalates, large hands back a fluent, ID-shaped, partly-right wrong answer that makes it through the escalaation gate.
 
-**3. The model stops admitting defeat.** This is the one that scales with model size, and it's the most consequential. Abstention — returning an empty transcript — is the single fail-safe behavior available on unrecoverable audio. On severe audio, whisper-tiny abstains **58%** of the time; it heard noise and said nothing. Whisper-large abstains **0%** of the time. The biggest model has traded the one move that fails safe for a confident wrong answer, every single time.
-
-You can read all three breakdowns off one operational number. Take a fixed gate — accept any transcript with confidence ≥ 0.55 — and ask how often what it accepts is actually correct. Clean: 90%. Moderate: 79%. Heavy: 62%. Severe: **0%**. The same gate that's a reliable filter on a good line is a rubber stamp on a bad one.
-
-This is also the mechanism behind the regression, in miniature. On the severe bucket, the larger model doesn't just get more accurate on recoverable audio — it pushes *unrecoverable* audio into the region where a candidate exists and the confidence clears the bar:
-
-| Severe bucket | tiny.en | small.en | medium.en | large-v3 |
-| --- | ---: | ---: | ---: | ---: |
-| Parser produced candidate on first turn | 7/25 | 18/25 | 17/25 | 22/25 |
-| First-turn confidence ≥ 0.55 | 0/25 | 2/25 | 4/25 | 12/25 |
-| Final wrong commit | 0/25 | 4/25 | 6/25 | 16/25 |
-
-### The whisper-large paradox
-
-Here's a subtlety worth slowing down for, because it looks like a contradiction. Whisper-large is the *most confidently wrong* model on severe audio. And yet, within its own outputs, its confidence is the *best-ordered* of any model: among the things it transcribes, the ones it's more confident about really are less wrong (its within-bucket ρ on severe is −0.54, the strongest of the four). How can it be both the worst-calibrated and the best-ranked?
-
-Because those are two different properties. One is the *offset* — where the whole cloud of confidence sits. The other is the *slope* — whether, inside that cloud, more confidence means less error. A line can sit high and still slope down. Whisper-large does both: it shifts the entire cloud upward (more confident across the board — the headline) *and* tilts it so its internal ranking sharpens.
-
-The catch is that the better ranking is operationally useless, because the whole range has floated above any sane cutoff. Whisper-large's *single most confident* transcription on the severe bucket — the one at the very top of its own scale, at 0.77 — is still a wrong ID. Its confidence does sag on its very worst hallucinations, but every output, top to bottom, sits above the line a clean-tuned threshold would draw. Better relative ranking, worse absolute calibration. The ranking gain buys you nothing when the model saves its highest confidence for fabrications.
-
-One thing the per-model numbers make precise: that upward shift is not uniform. Whisper-large is far more confident than tiny where it has real signal — a median **0.91** on clean audio and **0.82** on its correct hearings, against tiny's 0.67 and 0.63 — but only marginally more confident on severe audio (0.53 vs 0.47). The cloud floated up mostly because the *correct* hearings climbed, and that is what drags the operating threshold up with it (0.55 → 0.75). On the fabrications themselves, large is barely more sure than the small models. So "bigger model, more confident wrong answers" is, more precisely, "bigger model *stops abstaining*, against a confidence scale that floated up on everything it gets right" — not the model believing its hallucinations more loudly.
-
-### What "confidently wrong" actually is
-
-It's tempting to picture the confident errors as the model going rogue and reciting a fluent fabrication. Click the confident-but-wrong dots in the plot above and listen, though, and you mostly hear something more mundane and more alarming: the model confidently *reading back an ID* — just the wrong one. Whisper-large, sure at 0.71, hears `O as in Oscar, 2, 6, 0, F as in Foxtrot, 0, 0` through the noise and returns a crisp, ID-shaped string with letters that were never spoken.
-
-The wrong transcriptions split into two populations that sit at different confidence levels:
-
-- **Garbled read-backs** — still letters and digits, just the wrong ones. Fewer of them (48 of 176 wrong transcripts), but they're the *confident* errors: median confidence **0.56**.
-- **Fluent fabrications** — the off-topic "thank you for watching, see you next time" kind everyone pictures. More numerous (128 of 176), but the *least* confident: median **0.44**.
-
-So the dots that clear a confidence gate are overwhelmingly read-backs, not fabrications — and that's the operationally dangerous half. A fabrication doesn't parse as an ID and gets rejected; a confident wrong read-back parses cleanly and commits. The failure that survives to production isn't the model inventing prose where it should have stayed silent — it's the model confidently mis-resolving the identifier it was actually handed.
-
-### Why fluency reads as confidence
-
-Step back and the mechanism is almost obvious. `exp(avg_logprob)` rewards fluent, self-consistent token sequences — that's all a language model's probability really tracks. A bigger model has a stronger language prior, so when the acoustic evidence turns to mush, it has more to fall back on. It doesn't stall; it generates a clean, well-formed, ID-shaped string of digits and letters that it is genuinely "sure" of *as a piece of language* — even though that string has nothing to do with what the caller said.
-
-The confidence isn't a bug in the narrow sense. It's real. It's just confidence in a plausible, wrong ID. The smaller model, with a weaker prior, is more likely to throw up its hands and emit nothing — which is exactly the behavior you wanted. Scaling the model up makes it a better *language* model on degraded input *and strips its instinct to abstain* — and it's the second of those that turns it into a more dangerous *transcriber*.
-
-Here's that exact mechanism on one severe fixture (`sev_098`, canonical `117PS896`). Same audio, same policy; only the model changes:
+You can watch all of this on a single severe fixture (`sev_098`, canonical `117PS896`). Same audio, same policy; only the model changes:
 
 <AudioSample
   src="/audio/asr-calibration/sev_098_attempt1.wav"
   canonical="117PS896"
   bucket="severe"
-  caption="The smaller model fails safe with a blank; the larger models produce fluent, ID-shaped wrong answers above the commit threshold. large-v3's 0.77 here is its most confident severe transcription in the whole benchmark — and it's wrong."
+  caption="Confidence climbs with model size while the answer stays wrong."
   results={[
     {
       model: "tiny.en",
@@ -287,7 +243,7 @@ Here's that exact mechanism on one severe fixture (`sev_098`, canonical `117PS89
   ]}
 />
 
-And the failure mode generalizes. Across the severe and heavy buckets combined, roughly **one in five** transcriptions is *confidently very wrong* — it clears a 0.5 confidence bar while the raw transcript is more wrong than right. Those are precisely the cases a confidence guard exists to catch, and a confidence guard is structurally blind to them. (Not every hallucination is dangerous, to be clear — plenty are low-confidence and get escalated, which is the system working. The dangerous ones are the confident, ID-shaped read-backs — a plausible *wrong* identifier, not lurid prose — and bigger models make more of them.)
+So after recalibrating, Whisper-large is the *best* model on this benchmark both in terms of highest capture and lowest wrong-commit. It even performs best on the severe audio on every internal measure: the lowest raw CER (median **1.9** vs tiny's **7.3**) and the best-ordered confidence (ρ −0.54). But unlike the smaller models, its most confident wrong commit on the severe audio pokes through our F1-optimal threshold. So either that's not a big deal, or we'll need an additional signal to inform our escalation policy:
 
 ## Going beyond ASR confidence (there's a simple fix here)
 
@@ -313,9 +269,7 @@ When I built the benchmark, I didn't predict the model-swap miscalibration bug. 
 
 By being clear on the product-level implications of different failure modes, we can specify what it means for our agent to be shippable. In the case of my benchmark, one presumably really cares not just about transcription accuracy but also about generally preventing wrong transcription. It's good to be clear about that from the start so whatever unexpected bugs arise will be surfaced by your evals in the dimensions you care about.
 
-Additionally, by understanding how a heuristic diverges from reality, we stand a better chance at identifying root causes of our agents' aberrant behavior. And instead of just throwing the kitchen sink of common techniques at the problem, if we can get an intuition about what's going on by actually looking at *specific examples* in the data, it's often possible to apply a more appropriate solution. Otherwise we resort to band-aid solutions.
-
-In conclusion then, if you want your agent to know when it mishears, make sure you reason through *how* the agent 'knows'. Don't just be like, "was the ASR confident?" Given the audio, transcript, task context, and downstream cost, is there enough evidence to commit this field? And if nothing else, make sure your evals measure what you care about, so the bugs you didn't predict still pop up somewhere you're looking.
+More concretely, we've seen that ASR confidence can be an unreliable predictor of transcription correctnes. It changes unevenly per model and behaves especially weirdly on unrecoverable audio. By looking at the data and considering how Whisper comes up with its confidence metric, we got insight into how our heuristic diverges from reality. And instead of just throwing the kitchen sink of common techniques at the problem, we were able to propose a more apt solution based on the failure modes we observed.
 
 ## drop me a line
 
@@ -335,9 +289,9 @@ I'm the founding engineer at MakeTimeFlow building production AI agents and goin
 
 [^4]: A lot of voice agents these days still use the modular ASR → LLM → TTS architecture, though surely multimodal models stand a good chance of replacing that stack. Anyway, the benchmark itself doesn't need to know *how* an agent decides whether to escalate. It feeds audio samples and grades the agent on its behavior.
 
-[^5]: The decoding shown in this figure is *greedy* — take the single most-probable token at each step — because that yields one unambiguous distribution to plot per panel. The benchmark itself used beam search, which keeps several candidate sentences alive at once and returns the highest-probability complete one. Beam search can only match or beat greedy on total sequence probability, so it nudges the confidence number up a hair; for the two clips shown, the reproduced geometric mean lands within 0.03 of the benchmark's logged value (clean 0.77 vs 0.79, severe 0.35 vs 0.38). The per-step distributions themselves don't depend on which strategy you use to walk the token tree.
+[^5]: The decoding shown in this figure is *greedy*: take the single most-probable token at each step. The benchmark itself used beam search, which keeps several candidate sentences alive at once and returns the highest-probability complete one.
 
-[^6]: Multiplying per-token probabilities together might smell like an independence assumption, but it isn't one. By the chain rule, $P(t_1 \dots t_T \mid \text{audio}) = \prod_{t} P(t_t \mid t_{<t},\, \text{audio})$ exactly — and the decoder parameterizes precisely those conditionals, so the product is the true joint probability of the sequence; the dependence between tokens is absorbed *inside* each factor, not assumed away. That conditioning is also *one* way a wrong transcript can stay confident: because each token is conditioned on the ones already emitted, the later factors can stay high just because the sentence is fluent English (the filmstrip above shows this happening). I'll stop short of calling it *the* mechanism, though — in this benchmark the most confident errors are more often garbled ID read-backs than fluent fabrications, so how much this particular effect drives the confident hallucinations is something I haven't actually pinned down.
+[^6]: Multiplying per-token probabilities together isn't an independence assumption. By the chain rule, $P(t_1 \dots t_T \mid \text{audio}) = \prod_{t} P(t_t \mid t_{<t},\, \text{audio})$ exactly. And the decoder parameterizes precisely those conditionals, so the product is the true joint probability of the sequence. That conditioning is also *one* way a wrong transcript can stay confident: because each token is conditioned on the ones already emitted the later factors can stay high just because the sentence is fluent English.
 
 [^7]: Because the denominator in our CER metric is the full spelled-out read-back (e.g. `R as in romeo, E as in echo, …` which normalizes to ~50 characters), a hallucination that is *shorter* than that read-back can score *below* 1.0. A whisper-medium clip on severe returned "Thank you for watching and see you next time" against an 11-character ID and landed at CER 0.83. So it was fully wrong, but the long reference in the denominator pulls the ratio under 1.0. Scored against the bare ID instead, that same clip is 3.6. So the CER is reliable for *ranking* how wrong things are, but its absolute scale is compressed. 
 
