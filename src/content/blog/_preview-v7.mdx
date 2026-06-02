@@ -105,7 +105,7 @@ Let's walk through the layers of how you might miss it in practice:
 5. **Only looking at the aggregate wrong-commit rate.** Check out the amber line in the chart above. Overall the escalation behavior doesn't look so bad. But when you look specifically at the impossible cases, it's clear that the large model has *totally lost the plot*.
 6. **Calibrating the model's escalation policy to this benchmark.** The distribution of severe audio samples is arbitrary and has no relation to any actual production situation. Below I do an F1 sweep to find the 'optimal' for each model. But the calibration settings only work for this distribution of fixtures.
 
-## The band-aid
+## The band-aid: Threshold Recalibration
 
 Once I caught the bug I found new thresholds for each model by doing a threshold sweep and finding the optimal F1 score for each model (since presumably we want a good balance of recall and precision). Remember that what we mean here by a true positive is a genuinely impossible case, a true negative is a genuinely tractable case, a false positive is a tractable case you thought was impossible, and a false negative is an impossible case you thought was tractable. That produced the following nice-looking chart (remember that you'd want to grab data from your actual domain to see how frequently adversarial cases occur in practice):
 
@@ -289,21 +289,17 @@ Here's that exact mechanism on one severe fixture (`sev_098`, canonical `117PS89
 
 And the failure mode generalizes. Across the severe and heavy buckets combined, roughly **one in five** transcriptions is *confidently very wrong* — it clears a 0.5 confidence bar while the raw transcript is more wrong than right. Those are precisely the cases a confidence guard exists to catch, and a confidence guard is structurally blind to them. (Not every hallucination is dangerous, to be clear — plenty are low-confidence and get escalated, which is the system working. The dangerous ones are the confident, ID-shaped read-backs — a plausible *wrong* identifier, not lurid prose — and bigger models make more of them.)
 
-## The alternatives
+## Going beyond ASR confidence (there's a simple fix here)
 
-In short, if your voice agent needs to tracnscribe critical info over possibly distorted audio channels, then ASR confidence is probably not a complete solution to inform your escalation policy.
+Firstly, it's clear from the confidence vs CER graph that no amount of threshold calibration is going to produce a perfect classifier. In short, if your voice agent needs to tracnscribe critical info over possibly distorted audio channels, then ASR confidence is probably not a complete solution to inform your escalation policy. This is a good example of a situation where looking at the data really suggests some strong next steps, which might differ from the default approach. 
 
-We can look at the
+Namely, a standard tool for classifier calibration is to do something like temperature scaling or isotonic regression, which can turn a raw score into a better-calibrated probability of correctness. One could surely go deep in the technical weeds here but more robust calibration can't ultimately rescue you when the underlying signal lacks further separating power. 
 
-A production agent should combine several signals instead of leaning on the one:
+Now take a step back for a second. Are you thinking about the extremely simple (and maybe obvious) major improvement that would resolve most of our wrong commits? **Let your LLM make some common sense decisions!** The LLM will know from the conversation context what sort of value it should expect. If it's expecting to hear a medication name or an ID number etc., and instead hears a hallucinated sentence, then it can reason that there's been a mistake. So boom. That knocks out quite a few wrong commits right there. Additionally, if you look at the data, a number of the most confident wrong commits were actually on the non-severe audio in which the ASR would make contextually apparent mistakes, e.g. transcribing 'U as in Uniform' as 'U.S. in Uniform'. The LLM could catch that as well (though perhaps you'd want to update your system prompt after observing that failure mode). 
 
-1. **Per-model, per-condition calibration.** If the ASR model changes, recompute thresholds against a held-out set that includes cases where the right answer is escalation. Temperature scaling or isotonic regression can turn a raw score into a better-calibrated probability — but the calibration has to be against the task outcome you care about, and it can't fully rescue you when the underlying signal has no separating power left (as on severe audio).
-2. **Validate against the world, not the model.** Whisper's confidence tells you how sure it was about its tokens; it cannot tell you the ID is real. Check the captured value against the things you actually know — format and checksum rules, whether it exists in your database. An out-of-band check catches the fluent fabrications that confidence waves through. `KLANESTGOMESTREESTREES...` should never reach the commit stage regardless of how confident the decoder was.
-3. **Cross-attempt agreement.** When two attempts produce different candidate IDs, that disagreement is itself a signal — often a better one than either transcript's confidence. A production system should be more willing to escalate when the evidence changes across repeats.
-4. **Treat silence as signal, and match the model to the channel.** A model that returns nothing on bad audio is doing you a favor. If you know you're on a degraded channel, a bigger ASR is not automatically the safer choice — it's the one most likely to replace "I didn't catch that" with a confident wrong answer.
-5. **Cost-aware policy.** The optimal decision is not "maximize F1." A wrong committed ID can cause downstream harm; an extra human review is an operational cost. The threshold should reflect that asymmetry, not a symmetric accuracy metric.
+Beyond the simple win of just using the LLM as a second layer of common sense quality control, some additional simple improvements are to validate against the real world if that's an option. For example can you check an ID value against a database, and/or are there some formatting or checksum rules it might violate? Thirdly, the LLM can check whether an ID repeated a second time matches what it heard the first time. 
 
-The broader point is that a voice agent should not ask, "Was the ASR confident?" It should ask, "Given the audio, transcript, task context, and downstream cost, is there enough evidence to commit this field?" The benchmark is useful because it makes that question measurable — and because it shows, concretely, how the easy answer fails.
+A final consideration is that we need to be mindful of what we're optimizing for. What's your utility function? Probably not F1. We need to optimize the precision/recall tradeoff for the real world context of the task. What is the cost of a wrong commit versus the cost of an extra human review? The escalation threshold needs to reflect the (possibly) asymmetric cost of wrong commits. 
 
 ## Reflections
 
