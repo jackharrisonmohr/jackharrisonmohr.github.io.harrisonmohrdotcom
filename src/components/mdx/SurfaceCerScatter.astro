@@ -323,7 +323,7 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
     const stats =
       `<div class="scp-tip-stats">` +
         `<div class="scp-stat"><span>confidence</span><b>${p.c.toFixed(3)}</b></div>` +
-        `<div class="scp-stat"><span>surface CER</span><b style="color:${ec}">${p.e.toFixed(2)}${p.e > YMAX ? "*" : ""}</b></div>` +
+        `<div class="scp-stat"><span>CER</span><b style="color:${ec}">${p.e.toFixed(2)}${p.e > YMAX ? "*" : ""}</b></div>` +
       `</div>`;
 
     const spoken =
