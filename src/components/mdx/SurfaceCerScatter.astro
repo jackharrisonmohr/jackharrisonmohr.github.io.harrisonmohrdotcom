@@ -213,7 +213,7 @@ const ax = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
       <text transform={`translate(13 ${M.t + PH / 2}) rotate(-90)`} class="scp-axtitle" text-anchor="middle">character error rate (CER)</text>
 
       <!-- rho + clamp annotation -->
-      <text x={W - M.r} y={M.t - 30} class="scp-rho" text-anchor="end">ρ(conf, surface CER) = {meta.rho_all}<tspan class="scp-rho-dim">   |   excl. abstentions {meta.rho_excl}</tspan></text>
+      <text x={W - M.r} y={M.t - 30} class="scp-rho" text-anchor="end">ρ(conf, CER) = {meta.rho_all}<tspan class="scp-rho-dim">   |   excl. abstentions {meta.rho_excl}</tspan></text>
       <text x={W - M.r} y={M.t - 14} class="scp-clamp" text-anchor="end">{meta.clamped} dots clamped at {ax(YMAX)} (true max {meta.emax})</text>
 
       <!-- abstention callout -->
