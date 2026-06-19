@@ -19,7 +19,7 @@ import BlogMargins from "../../components/mdx/BlogMargins.astro";
 <HeroDiptych />
 
 <Callout type="info" label="TL;DR">
-I built a benchmark that evaluates **ID Capture** (correctly transcribing a spoken identifier like a medication name or account number) over distorted audio channels. The benchmark caught a **regression** (performance dip) in my voice agent when I swapped in a bigger speech-to-text (ASR) model. This led me to investigate the shortcomings of using ASR transcription confidence as a proxy for whether the model actually heard correctly.
+I built a benchmark that evaluates **ID Capture** (correctly transcribing a spoken identifier like a medication name or account number) over distorted audio channels. The benchmark caught a performance dip in my voice agent when I swapped in a bigger speech-to-text (ASR) model. This led me to investigate the shortcomings of using ASR transcription confidence as a proxy for whether the model actually heard correctly and to enumerate some commonsense improvements. 
 </Callout>
 
 
@@ -102,7 +102,7 @@ Some of the complexities this setup removes:
 - The benchmark provides the agent very limited options: submit a transcript capture, escalate to a human, or ask to repeat the audio file.
 - Importantly, the setup completely ignores many of the essential challenges of the voice agent domain: turn-taking, barge-ins, end-pointing, latency, etc. In fact, the benchmark is *not* even real-time. It's turn-based, with an optional HTTP-based FastAPI server. These real-time issues are not germane to the question our benchmark is asking.
 
-It's also worth pointing out that the purpose of this benchmark is not to assess frontier capabilities, but rather to catch regressions. The current generation of agents can easily perform well on it already.
+It's also worth pointing out that the purpose of this benchmark is not to assess frontier capabilities, but rather to catch regressions (by which I mean performance dips, not to be confused with linear regressions). The current generation of agents can easily perform well on it already.
 
 ## The regression
 
@@ -189,20 +189,16 @@ Okay, having established how we got the CER values, let's compare them to ASR co
 
 <SurfaceCerScatter />
 
-### Confidence behaves differently on unrecoverable audio
+### Confidence behaves differently on unrecoverable vs recoverable audio
 
-This graph gives an intuition for how ASR confidence behaves differently based on model size and distortion level.
+You can see these two regimes (severe vs non-severe) disentangled in the two mini-graphs above. In the non-severe audio graph (right), ASR confidence is a pretty good predictor of correctness. Lower confidence dots here mostly correspond to  the model mis-transcribing a few characters. In the severely distorted cases (left), all models are wrong 100% of the time, sometimes hallucinating transcriptions, and other times getting the occasional correct character. 
 
-You can see these two regimes (severe vs non-severe) disentangled in the two mini-graphs above. In the non-severe audio graph (right), ASR confidence is a pretty good predictor of correctness. If you inspect the lower confidence dots you see examples where the model had mis-transcribed a few characters but got the general gist of the ID. In the severely distorted cases (left), all models are wrong 100% of the time. In the latter case, sometimes the model's confidence appears to be propped up by a hallucinated sentence. Other times, it hears a few characters correctly, but mostly misses it. 
-
-### Confidence behaves differently for different models
+### Confidence behaves differently for different model sizes
 This whole post was kicked off by the observation that larger Whisper models have overall higher confidence (remember the regression we caught?). But the changes in ASR confidence between models is more nuanced than just "bigger model -> more confident".
 
-First, the gap between models is huge on clean audio and almost gone on severe. On clean audio whisper-large sits at a median confidence of **0.92** against tiny's **0.67**. On severe audio that gap nearly closes: **0.53** vs **0.47**. So the upward shift that moved large's threshold came mostly from large getting more confident *where it's right*, not from getting uniformly louder everywhere. 
+The hypothesis that "bigger models just believe their hallucinations more" turns out to be wrong on severe audio. Whisper-large is not really surer of its hallucinations than the small models. Its median confidence on hallucinations is **0.45**, right in the same 0.40–0.47 band as everyone else. So Large is not more deluded about its hallucinations.
 
-The hypothesis that "bigger models just believe their hallucinations more" turns out to be wrong on severe audio. Look only at the fluent, off-topic fabrications (the "thanks for watching, see you next time" kind) and whisper-large is not really surer of them than the small models. Its median confidence on fabrications is **0.45**, right in the same 0.40–0.47 band as everyone else. So Large is not more deluded about its hallucinations.
-
-What actually shifts is confidence on garbled read-backs where the transcripts are still letters and digits. Large produces far more of them (20 of its 39 severe transcripts, versus zero for tiny), and they are the confident population: a median **0.62** for large's read-backs against **0.45** for its fabrications. A likely reason why they are more confident is because They are partly correct: large's garbled read-backs have a median raw CER of **1.1**, while its hallucinations have a median of **3.3**. Tellingly, large is the *only* model whose confidence meaningfully correlates with error on severe audio (ρ = **−0.54**, the strongest of the four). Within its own outputs, the surer ones really are less wrong. 
+What actually shifts is confidence on garbled transcriptions where the model gets a few correct characters. Large produces far more of them (20 of its 39 severe transcripts, versus zero for tiny), and they are more confident than the hallucinations: a median **0.62** for large's garbled transcriptions against **0.45** for its hallucinations. A likely reason why they are more confident is because they are partly correct: large's garbled transcriptions have a median raw CER of **1.1**, while its hallucinations have a median of **3.3**. Tellingly, large is the *only* model whose confidence meaningfully correlates with error on severe audio (ρ = **−0.54**, the strongest of the four). Within its own outputs, the surer ones really are less wrong. So Large's enhanced ability to partially recover severely distorted audio is a characteristic that is not shared by the smaller models. 
 
 ## Going beyond ASR confidence (there's a simple fix here)
 
@@ -224,7 +220,7 @@ A final consideration is that we need to be mindful of what we're optimizing for
 
 Whether in life or in evals, it pays to be clear on what you want.
 
-When I built the benchmark, I didn't predict the model-swap miscalibration bug. Indeed if I were building a real agent, the added complexity would surely create opportunities for numerous other bugs. The lesson here is certainly *not* "remember to calibrate parameters when you swap models", nor is it even, "design systems that calibrate themselves so you can set it and forget it". The lesson is that we often can't predict the problems that will arise. We should therefore get specific about what we care about, and how we'll know whether our agent is sufficiently aligned in the dimensions we care about (ideally) before we release it into the wild.[^3]
+When I built the benchmark, I didn't predict the model-swap miscalibration bug. Indeed if I were building a real agent, the added complexity would surely create opportunities for numerous other bugs. The lesson here is certainly *not* "remember to calibrate parameters when you swap models", nor is it even, "design systems that calibrate themselves so you can set it and forget it". The lesson is that **we often can't predict the problems that will arise.** We should therefore get specific about what we care about, and how we'll know whether our agent is sufficiently aligned in the dimensions we care about (ideally) before we release it into the wild.[^3]
 
 By being clear on the product-level implications of different failure modes, we can specify what it means for our agent to be shippable. In the case of my benchmark, one presumably really cares not just about transcription accuracy but also about generally preventing wrong transcription. It's good to be clear about that from the start so whatever unexpected bugs arise will be surfaced by your evals in the dimensions you care about.
 
@@ -242,7 +238,7 @@ I'm the founding engineer at MakeTimeFlow building production AI agents and goin
 
 [^1]: Indeed the distortion is both phone-y and phony. The audio pipeline mimics artifacts that sound kind of like that which you'd hear on a phone call, but it's artificial and doesn't quite match what you'd really get (e.g. codec hops, background conversations, side speech, bad pronunciation). We *assume* that our phony distortion pipeline is a decent proxy for the phone-y distortion you'd get in the wild.
 
-[^2]: Specifically: $\exp\!\left(\frac{1}{N}\sum_{i=1}^{N} \log p(\text{token}_i)\right)$, the exponentiated arithmetic mean of log-probabilities, which equals the geometric mean of the raw probabilities $\left(\prod_{i} p(\text{token}_i)\right)^{1/N}$. Whisper exposes this directly as `avg_logprob` in its segment output; $\exp(\cdot)$ puts it back on the $[0, 1]$ scale.
+[^2]: that is, $\exp\!\left(\frac{1}{N}\sum_{i=1}^{N} \log p(\text{token}_i)\right)$, the exponentiated arithmetic mean of log-probabilities, which equals the geometric mean of the raw probabilities $\left(\prod_{i} p(\text{token}_i)\right)^{1/N}$. Whisper exposes this directly as `avg_logprob` in its segment output; $\exp(\cdot)$ puts it back on the $[0, 1]$ scale.
 
 [^3]: This of course is a very small, practical, and near-term version of the far grander and more serious AI alignment problem. It is, however, categorically different, in that long-horizon alignment of super-intelligent AI raises some pretty deep and open questions for science and philosophy, while what we're talking about here is much more of a tractable and grounded matter: specifying what you want from the country of geniuses in the datacenter is way harder than specifying what you want from your call center customer support agent.
 
