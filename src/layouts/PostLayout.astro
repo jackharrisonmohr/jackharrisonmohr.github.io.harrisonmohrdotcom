@@ -5,12 +5,13 @@ interface Props {
   title: string;
   subtitle?: string;
   description: string;
+  ogImage?: string;
   date: Date;
   readingTime: number;
   author?: string;
 }
 
-const { title, subtitle, description, date, readingTime, author = "Harrison Mohr" } = Astro.props;
+const { title, subtitle, description, ogImage, date, readingTime, author = "Harrison Mohr" } = Astro.props;
 
 const formattedDate = date.toLocaleDateString("en-US", {
   year: "numeric",
@@ -19,7 +20,7 @@ const formattedDate = date.toLocaleDateString("en-US", {
 });
 ---
 
-<PageLayout title={`${title} — Harrison Mohr`} description={description}>
+<PageLayout title={`${title} — Harrison Mohr`} description={description} ogImage={ogImage}>
   <article class="max-w-4xl mx-auto px-6 py-20">
     <header class="mb-12">
       <h1 class="font-serif text-4xl sm:text-5xl font-semibold tracking-tight mb-4">
