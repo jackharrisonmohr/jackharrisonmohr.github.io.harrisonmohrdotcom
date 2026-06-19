@@ -376,14 +376,14 @@
     },
     severe: {
       label: 'Severe distortion',
-      audio: '/audio/asr-calibration/sev_092_attempt1.wav',
-      canonical: '128ZT412',
-      model: 'large-v3',
-      asr: '"3-8-8-0-7-4-1-6"',
-      conf: 0.70,
-      parsed: '38807416',
+      audio: '/audio/asr-calibration/sev_098_attempt1.wav',
+      canonical: '117PS896',
+      model: 'small.en',
+      asr: '"One, one, seven, three, as it happens, as it stands, nine."',
+      conf: 0.56,
+      parsed: '1173STANDS9',
       branch: 'commit',
-      action: 'Commit 38807416',
+      action: 'Commit 1173STANDS9',
       grading: 'wrong',
       gradingLabel: '✗ wrong',
     },
@@ -532,10 +532,13 @@
 
       activate('whisper');
       setText('whisper-sub', s.model);
-      setText('pipe-asr', `${s.asr} · ${fmtConf(s.conf)}`);
+      // The in-diagram pipe label is tight on space; truncate long ASR strings
+      // there while the full transcript still shows in the readout grid below.
+      const asrLabel = s.asr.length > 26 ? s.asr.slice(0, 24).trimEnd() + '…”' : s.asr;
+      setText('pipe-asr', `${asrLabel} · ${fmtConf(s.conf)}`);
       q('[data-text="pipe-asr"]')?.classList.add('afd-pipe-live');
       setReadout('asr', s.asr);
-      setReadout('conf', s.conf === null ? 'n/a' : `${fmtConf(s.conf)}  (exp(avg_logprob))`);
+      setReadout('conf', s.conf === null ? 'n/a' : fmtConf(s.conf));
       flowArrow('whisper-parser');
       await movePacketTo([480, 176], 550, myRun);
       if (myRun !== runId) return;
