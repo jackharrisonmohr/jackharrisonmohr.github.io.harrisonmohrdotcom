@@ -20,6 +20,12 @@ import BlogMargins from "../../components/mdx/BlogMargins.astro";
 <HeroDiptych />
 
 <Callout type="info" label="TL;DR">
+Voice agents are being deployed in increasingly high-stakes scenarios. We're still in the early phases of the rollout. Today, a critical failure often means lost revenues. But a future where we rely on voice agents for safety-critical roles means that effective evaluation becomes essential for health and safety.
+
+Imagine a medical scribe agent capturing the wrong medication name, an emergency dispatch agent capturing the wrong street address, or an air traffic control agent hearing the wrong flight number. These errors can result in harm to humans.
+
+ So the practical question, for anyone building one of these agents, is: how does it know?
+
 This post builds a benchmark for capturing critical IDs over degraded, phone-like audio, and uses it to catch a regression: swapping in a bigger Whisper speech-to-text (ASR) model raised capture accuracy but quietly pushed the wrong-commit rate on impossible audio from 0% to 64%. From there I dig into why ASR confidence is a leaky proxy for correctness and reason toward better escalation signals.
 
 Takeaways if you're building voice agents for noisy, high-stakes settings:
@@ -31,18 +37,9 @@ Takeaways if you're building voice agents for noisy, high-stakes settings:
 
 </Callout>
 
+## The trouble with ASR Confidence
 
-## The question
-
-Voice agents are being deployed in increasingly high-stakes scenarios. We're still in the early phases of the rollout. Today, a critical failure often means lost revenues. But a future where we rely on voice agents for safety-critical roles means that effective evaluation becomes essential for health and safety.
-
-Imagine a medical scribe agent capturing the wrong medication name, an emergency dispatch agent capturing the wrong street address, or an air traffic control agent hearing the wrong flight number. These errors can result in harm to humans.
-
-The examples above are all instances of the critical failure mode of mishearing key information. When the agent can't reliably hear, it should *escalate to a human*. So the practical question, for anyone building one of these agents, is: how does it know?
-
-### The trouble with ASR Confidence
-
-The obvious place to look is the ASR's own confidence. ASR API's typically hand you some version of per-token probabilities of the transcript they decoded. A standard way to collapse those into a single number is `exp(avg_logprob)`, the geometric mean of the per-token probabilities[^2]. Then you can wire it into an escalation policy: above some threshold, commit; below another, escalate; in between, ask the person to repeat.
+The obvious place to look for a signal for whether the model heard correctly is the ASR's own confidence. ASR API's typically hand you some version of per-token probabilities of the transcript they decoded. A standard way to collapse those into a single number is `exp(avg_logprob)`, the geometric mean of the per-token probabilities[^2]. Then you can wire it into an escalation policy: above some threshold, commit; below another, escalate; in between, ask the person to repeat.
 
 So the signal is almost always *available*, but two things get in the way. First, note that the ASR model isn't the 'agent'. The ASR turns audio into text plus that confidence number. The agent is the ASR plus everything downstream that decides how to deal with that transcription. In many voice agents in production today that feature a typical ASR → LLM → TTS cascade, only the transcript *text* is passed to the LLM, so the agent never even sees the confidence and can't reason about how well it heard.
 

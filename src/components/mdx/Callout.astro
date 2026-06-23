@@ -46,4 +46,17 @@ const heading = label ?? labels[type];
   .callout-body :global(strong) {
     font-weight: 600;
   }
+  /* not-prose also strips list markers/indentation/spacing; restore them */
+  .callout-body :global(ul),
+  .callout-body :global(ol) {
+    margin-top: 0.85em;
+    padding-left: 1.5em;
+    list-style: disc;
+  }
+  .callout-body :global(ol) {
+    list-style: decimal;
+  }
+  .callout-body :global(li + li) {
+    margin-top: 0.4em;
+  }
 </style>
