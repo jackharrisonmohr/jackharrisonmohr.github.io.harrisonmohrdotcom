@@ -1,7 +1,7 @@
 ---
 title: "How Does Your Voice Agent Know When It Mishears?"
-subtitle: "The fallibility of ASR confidence as a predictor of correctness."
-description: "The fallibility of ASR confidence as a predictor of correctness."
+subtitle: "Evaluating voice agents on degraded audio, and why ASR confidence isn't enough"
+description: "Most voice agents gate escalation on ASR confidence. Using a benchmark for capturing IDs over degraded audio, I show why that signal isn't enough, and what to use instead."
 ogImage: "/images/og/voice-agent-mishears.png"
 date: 2026-06-18
 draft: false
@@ -20,7 +20,15 @@ import BlogMargins from "../../components/mdx/BlogMargins.astro";
 <HeroDiptych />
 
 <Callout type="info" label="TL;DR">
-I built a benchmark that evaluates **ID Capture** (correctly transcribing a spoken identifier like a medication name or account number) over distorted audio channels. The benchmark caught a performance dip in my voice agent when I swapped in a bigger speech-to-text (ASR) model. This led me to investigate the shortcomings of using ASR transcription confidence as a proxy for whether the model actually heard correctly and to enumerate some commonsense improvements. 
+This post builds a benchmark for capturing critical IDs over degraded, phone-like audio, and uses it to catch a regression: swapping in a bigger Whisper speech-to-text (ASR) model raised capture accuracy but quietly pushed the wrong-commit rate on impossible audio from 0% to 64%. From there I dig into why ASR confidence is a leaky proxy for correctness and reason toward better escalation signals.
+
+Takeaways if you're building voice agents for noisy, high-stakes settings:
+
+- **ASR confidence ≠ correctness.** Don't gate escalation on confidence alone. On degraded audio, Whisper will hallucinate a fluent transcript with high confidence.
+- **Add cheap, independent checks.** Let the LLM sanity-check the transcript against the value it expects (a med name, an ID format); validate against a database or checksum; ask for a repeat and compare. Most wrong commits fall to one of these.
+- **Don't trust the aggregate.** A tolerable-looking 24% overall wrong-commit rate hid a catastrophic 64% on the hardest audio. Slice your metrics by the conditions that match your production distribution, and include adversarial "impossible" cases that should trigger escalation.
+- **Recalibrate per model, but only against your own data.** Thresholds optimal for one model (or one audio mix) aren't optimal for another, and F1 probably isn't your real objective. Tune on logged production audio against the actual cost of a wrong commit vs. a human review.
+
 </Callout>
 
 
@@ -34,13 +42,15 @@ The examples above are all instances of the critical failure mode of mishearing 
 
 ### The trouble with ASR Confidence
 
-To clarify the setup here, the Whisper ASR model is *not* the same as the 'agent'. Whisper takes the audio and returns text plus a confidence number. The agent does everything else: it takes Whisper's text and confidence and chooses whether to commit the value, ask the speaker to repeat, or escalate to a human. 
+The obvious place to look is the ASR's own confidence. ASR API's typically hand you some version of per-token probabilities of the transcript they decoded. A standard way to collapse those into a single number is `exp(avg_logprob)`, the geometric mean of the per-token probabilities[^2]. Then you can wire it into an escalation policy: above some threshold, commit; below another, escalate; in between, ask the person to repeat.
 
-Most ASR models expose some kind of confidence number. The Whisper family of models, for example, exposes the per-token probabilities of the transcript it decoded. A natural way to represent its overall confidence in its transcription then is `exp(avg_logprob)`, the geometric mean of the per-token probabilities.[^2] You can then wire that into an escalation policy: above some threshold, commit; below another, escalate; in between, ask the person to repeat.
+So the signal is almost always *available*, but two things get in the way. First, note that the ASR model isn't the 'agent'. The ASR turns audio into text plus that confidence number. The agent is the ASR plus everything downstream that decides how to deal with that transcription. In many voice agents in production today that feature a typical ASR → LLM → TTS cascade, only the transcript *text* is passed to the LLM, so the agent never even sees the confidence and can't reason about how well it heard.
 
-But ASR confidence isn't the same as correctness. It scores how confidently Whisper produced *the tokens it chose*, not whether those tokens are *true*. In some scenarios confidence is a good proxy for correctness. On clean-ish audio a dip in confidence might correspond to a mistaken letter. But on degraded audio ASR confidence decorrelates from correctness. And the agent can't tell from ASR confidence which regime it's in. For example, when given severely degraded audio, Whisper often hallucinates a transcription with high confidence (see the top image). So is the model confident because it hallucinated on degraded audio or because it's actually correct? 
+Second, even when you do feed that number into your escalation policy, it's a leaky proxy for correctness: it scores how confidently Whisper produced *the tokens it chose*, not whether those tokens are *true*. On clean-ish audio that's fine because a dip in confidence usually means a mistaken letter or two. But on degraded audio confidence decorrelates from correctness, and the agent can't tell from the number alone which regime it's in. Given severely degraded audio, Whisper will often hallucinate a transcription *with high confidence* (see the top image). So is it confident because it's correct, or because it confidently made something up?
 
-We'll look at how Whisper behaves on my ID capture benchmark to get a sense for the failure modes of ASR confidence as a predictor of speech-to-text transcription correctness. 
+None of this is news to the speech-recognition community: that raw decoder probabilities are poorly calibrated has been known for years. What's maybe less appreciated by people *building voice agents* is how unreliably this baseline signal can perform in a high-stakes escalation policy on degraded audio. 
+
+In the rest of this post, we'll look at how Whisper ASR models behave on my ID capture benchmark to get a sense for this failure mode of ASR confidence as a predictor of speech-to-text transcription correctness. 
 
 ## The benchmark
 
